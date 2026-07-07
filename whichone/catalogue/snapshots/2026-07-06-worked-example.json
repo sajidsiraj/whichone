@@ -1,0 +1,81 @@
+{
+  "version": "2026-07-06-worked-example",
+  "created_at": "2026-07-06T18:00:00Z",
+  "description": "Illustrative six-model candidate set from the paper's worked example. Values are illustrative, not measurements of named commercial systems. Model D is dominated by model C.",
+  "objectives": [
+    {"id": "capability", "name": "General capability", "direction": "max", "description": "Composite of public benchmark scores (0-100)"},
+    {"id": "tool_reliability", "name": "Tool-calling reliability", "direction": "max", "description": "Function-calling success rate (0-1)"},
+    {"id": "cost", "name": "Cost", "direction": "min", "description": "Blended price per million tokens, USD"},
+    {"id": "latency", "name": "Latency", "direction": "min", "description": "Median time-to-first-token, seconds"},
+    {"id": "context", "name": "Context capacity", "direction": "max", "description": "Maximum context window, thousands of tokens"},
+    {"id": "safety", "name": "Safety and robustness", "direction": "max", "description": "Composite of published safety evaluations (0-100)"}
+  ],
+  "models": [
+    {
+      "id": "model-a", "name": "Model A", "provider": "illustrative", "deployment_class": "api",
+      "objectives": {
+        "capability": {"value": 92, "source": "illustrative"},
+        "tool_reliability": {"value": 0.97, "source": "illustrative"},
+        "cost": {"value": 30.0, "source": "illustrative"},
+        "latency": {"value": 0.9, "source": "illustrative"},
+        "context": {"value": 400, "source": "illustrative"},
+        "safety": {"value": 88, "source": "illustrative"}
+      }
+    },
+    {
+      "id": "model-b", "name": "Model B", "provider": "illustrative", "deployment_class": "api",
+      "objectives": {
+        "capability": {"value": 88, "source": "illustrative"},
+        "tool_reliability": {"value": 0.95, "source": "illustrative"},
+        "cost": {"value": 12.0, "source": "illustrative"},
+        "latency": {"value": 0.7, "source": "illustrative"},
+        "context": {"value": 200, "source": "illustrative"},
+        "safety": {"value": 85, "source": "illustrative"}
+      }
+    },
+    {
+      "id": "model-c", "name": "Model C", "provider": "illustrative", "deployment_class": "api",
+      "objectives": {
+        "capability": {"value": 80, "source": "illustrative"},
+        "tool_reliability": {"value": 0.90, "source": "illustrative"},
+        "cost": {"value": 2.5, "source": "illustrative"},
+        "latency": {"value": 0.5, "source": "illustrative"},
+        "context": {"value": 128, "source": "illustrative"},
+        "safety": {"value": 82, "source": "illustrative"}
+      }
+    },
+    {
+      "id": "model-d", "name": "Model D", "provider": "illustrative", "deployment_class": "api",
+      "objectives": {
+        "capability": {"value": 78, "source": "illustrative"},
+        "tool_reliability": {"value": 0.85, "source": "illustrative"},
+        "cost": {"value": 3.0, "source": "illustrative"},
+        "latency": {"value": 0.6, "source": "illustrative"},
+        "context": {"value": 128, "source": "illustrative"},
+        "safety": {"value": 80, "source": "illustrative"}
+      }
+    },
+    {
+      "id": "model-e", "name": "Model E", "provider": "illustrative", "deployment_class": "api",
+      "objectives": {
+        "capability": {"value": 90, "source": "illustrative"},
+        "tool_reliability": {"value": 0.93, "source": "illustrative"},
+        "cost": {"value": 18.0, "source": "illustrative"},
+        "latency": {"value": 1.2, "source": "illustrative"},
+        "context": {"value": 1000, "source": "illustrative"},
+        "safety": {"value": 84, "source": "illustrative"}
+      }
+    },
+    {
+      "id": "model-f", "name": "Model F", "provider": "illustrative", "deployment_class": "api",
+      "objectives": {
+        "capability": {"value": 70, "source": "illustrative"},
+        "tool_reliability": {"value": 0.80, "source": "illustrative"},
+        "cost": {"value": 1.0, "source": "illustrative"},
+        "latency": {"value": 0.3, "source": "illustrative"},
+        "context": {"value": 32, "source": "illustrative"},
+        "safety": {"value": 75, "source": "illustrative"}
+      }
+    }
+  ]
+}
