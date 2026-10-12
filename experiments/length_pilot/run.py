@@ -37,7 +37,7 @@ import requests
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-HARNESS_VERSION = "2"
+HARNESS_VERSION = "3"
 
 ENDPOINTS = {
     "groq": "https://api.groq.com/openai/v1/chat/completions",
@@ -129,10 +129,20 @@ def make_task(seed: int, lmax: int, difficulty: int = 1):
 
 
 def parse_total(text: str | None):
-    m = re.search(r'"total"\s*:\s*(-?\d+)', text or "")
+    """Read the total as a JSON parser would: if the key appears twice, the
+    last value wins. Falls back to the last "total" match, then the last
+    integer, for replies that are not valid JSON."""
+    t = (text or "").strip()
+    try:
+        d = json.loads(t)
+        if isinstance(d, dict) and isinstance(d.get("total"), int):
+            return d["total"]
+    except ValueError:
+        pass
+    m = re.findall(r'"total"\s*:\s*(-?\d+)', t)
     if m:
-        return int(m.group(1))
-    m = re.findall(r"-?\d+", text or "")
+        return int(m[-1])
+    m = re.findall(r"-?\d+", t)
     return int(m[-1]) if m else None
 
 
@@ -319,7 +329,7 @@ def run_one(cfg, seed, keys, rng, sampler=None):
         messages.append({"role": "assistant", "content": res["text"] or ""})
         records.append({"step": j, "true": true_total, "got": got, "correct": got == true_total,
                         **{k: v for k, v in res.items() if k != "text"},
-                        "raw": (res["text"] or "")[:80]})
+                        "raw": res["text"] or ""})
         if cfg.get("sleep"):
             time.sleep(cfg["sleep"])
     return records
