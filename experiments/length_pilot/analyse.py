@@ -12,7 +12,8 @@ Inputs (all under version control):
   prices.json      {"model": [usd_per_M_input, usd_per_M_output]}, used when a
                    provider does not report billed cost
   energy.json      {"model": {"j_per_output_token": x, "source": "..."}}:
-                   third-party estimates, reported as estimates
+                   third-party estimates for API models, reported as estimates.
+                   Local runs carry measured GPU energy per step and use that.
 Outputs:
   output/summary.json  all numbers quoted in the paper
 """
@@ -68,7 +69,10 @@ def step_resources(rs, lmax, prices, energy, model):
                 c = float("nan")
             sums["cost"][j] += c
             sums["time"][j] += s["provider_time"] if s.get("provider_time") is not None else s["wall_time"]
-            sums["energy"][j] += s["completion_tokens"] * e if e is not None else float("nan")
+            if s.get("gpu_energy_j") is not None:  # measured on the local GPU
+                sums["energy"][j] += s["gpu_energy_j"]
+            else:  # third-party estimate per output token, flagged as such
+                sums["energy"][j] += s["completion_tokens"] * e if e is not None else float("nan")
     n = len(rs)
     return {k: [x / n for x in v] for k, v in sums.items()}
 
@@ -114,7 +118,9 @@ def main():
         model = rs[0]["model"]
         summ[key] = summarise(rs, lmax, prices, energy, model)
         summ[key]["rho_ci95"] = bootstrap_rho(rs, lmax, a.boot, rng)
-        summ[key]["energy_is_estimate"] = model in energy
+        measured = all(s.get("gpu_energy_j") is not None for r in rs for s in r["steps"])
+        summ[key]["energy_source"] = "measured (GPU board, NVML)" if measured else (
+            "estimate (energy.json)" if model in energy else "none")
         print(f"{key}: runs={len(rs)} rho_hat={summ[key]['rho_hat']:.4f} "
               f"CI95={tuple(round(x, 4) for x in summ[key]['rho_ci95'])}")
 

@@ -1,0 +1,10 @@
+{
+  "common": {"provider": "ollama", "runs": 15, "lmax": 50, "seed0": 1000, "difficulty": 1, "max_tokens": 40},
+  "models": [
+    {"model": "qwen3:1.7b"},
+    {"model": "qwen3:4b"},
+    {"model": "qwen3:8b"},
+    {"model": "qwen3:14b"},
+    {"model": "qwen3.8-27b"}
+  ]
+}

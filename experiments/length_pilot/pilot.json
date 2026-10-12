@@ -1,7 +1,12 @@
 {
   "common": {"runs": 15, "lmax": 50, "seed0": 1000, "difficulty": 1},
   "models": [
-    {"provider": "groq", "model": "llama-3.1-8b-instant"},
-    {"provider": "groq", "model": "llama-3.3-70b-versatile"}
+    {"provider": "groq", "model": "allam-2-7b", "max_tokens": 40},
+    {"provider": "groq", "model": "qwen/qwen3.8-27b", "max_tokens": 64,
+     "extra": {"reasoning_effort": "none"}},
+    {"provider": "groq", "model": "openai/gpt-oss-20b", "max_tokens": 1024,
+     "extra": {"reasoning_effort": "low", "include_reasoning": false}},
+    {"provider": "groq", "model": "openai/gpt-oss-120b", "max_tokens": 1024,
+     "extra": {"reasoning_effort": "low", "include_reasoning": false}}
   ]
 }

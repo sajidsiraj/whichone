@@ -42,6 +42,7 @@ HARNESS_VERSION = "1"
 ENDPOINTS = {
     "groq": "https://api.groq.com/openai/v1/chat/completions",
     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+    "ollama": "http://127.0.0.1:11434/api/chat",
 }
 KEY_VARS = {"groq": "GROQ_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
 
@@ -54,16 +55,21 @@ SYSTEM = (
 )
 
 
-def load_key(provider: str) -> str:
+def load_keys(provider: str) -> list[str]:
+    """All keys for a provider: VAR, VAR2, VAR3, ... from the environment,
+    then from the repository's .env. Several keys are rotated on rate limits."""
     var = KEY_VARS[provider]
-    if os.environ.get(var):
-        return os.environ[var].strip()
+    found: dict[str, str] = {n: v.strip() for n, v in os.environ.items()
+                             if re.fullmatch(var + r"\d*", n) and v.strip()}
     env = REPO / ".env"
-    if env.exists():
+    if not found and env.exists():
         for line in env.read_text().splitlines():
-            if line.strip().startswith(var + "="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
-    sys.exit(f"No key: set {var} in the environment or in {env}.")
+            n, _, v = line.partition("=")
+            if re.fullmatch(var + r"\d*", n.strip()) and v.strip():
+                found[n.strip()] = v.strip().strip('"').strip("'")
+    if not found:
+        sys.exit(f"No key: set {var} in the environment or in {env}.")
+    return [found[n] for n in sorted(found)]
 
 
 def git_commit() -> str:
@@ -101,19 +107,22 @@ def parse_total(text: str | None):
     return int(m[-1]) if m else None
 
 
-def call_api(provider, model, messages, key, provider_pin=None, max_retries=8):
-    body = {"model": model, "messages": messages, "temperature": 0, "max_tokens": 40}
+def call_api(provider, model, messages, keys, provider_pin=None, max_tokens=40,
+             extra=None, max_retries=12):
+    body = {"model": model, "messages": messages, "temperature": 0,
+            "max_tokens": max_tokens, **(extra or {})}
     if provider == "openrouter":
         body["usage"] = {"include": True}
         if provider_pin:
             body["provider"] = {"order": [provider_pin], "allow_fallbacks": False}
-    headers = {"Authorization": f"Bearer {key}"}
     for attempt in range(max_retries):
+        headers = {"Authorization": f"Bearer {keys[attempt % len(keys)]}"}
         t0 = time.time()
         r = requests.post(ENDPOINTS[provider], headers=headers, json=body, timeout=120)
         wall = time.time() - t0
         if r.status_code == 429 or r.status_code >= 500:
-            time.sleep(min(float(r.headers.get("retry-after", 2 ** attempt)), 60))
+            if r.status_code >= 500 or attempt >= len(keys) - 1:
+                time.sleep(min(float(r.headers.get("retry-after", 2 ** min(attempt, 6))), 60))
             continue
         r.raise_for_status()
         d = r.json()
@@ -125,11 +134,129 @@ def call_api(provider, model, messages, key, provider_pin=None, max_retries=8):
             "system_fingerprint": d.get("system_fingerprint"),
             "prompt_tokens": u.get("prompt_tokens"),
             "completion_tokens": u.get("completion_tokens"),
+            "reasoning_tokens": ((u.get("completion_tokens_details") or {}).get("reasoning_tokens")),
+            "finish_reason": d["choices"][0].get("finish_reason"),
             "provider_time": u.get("total_time"),  # Groq: server-side time
             "cost": u.get("cost"),                  # OpenRouter: billed cost, USD
             "wall_time": wall,
         }
     raise RuntimeError("too many retries")
+
+
+class PowerSampler:
+    """Samples GPU board power through NVML (ctypes, no extra packages) and
+    integrates it over time. NVML reports power averaged over about one
+    second, so per-step values are smoothed; whole-run totals are not
+    affected. Measures the GPU board only, not CPU or memory."""
+
+    def __init__(self, interval=0.05, index=0):
+        import ctypes
+        import threading
+        self.ct = ctypes
+        self.nv = ctypes.CDLL("libnvidia-ml.so.1")
+        self.nv.nvmlInit_v2()
+        self.h = ctypes.c_void_p()
+        self.nv.nvmlDeviceGetHandleByIndex_v2(index, ctypes.byref(self.h))
+        self.interval = interval
+        self.samples: list[tuple[float, float]] = []
+        self.lock = threading.Lock()
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def watts(self) -> float:
+        p = self.ct.c_uint()
+        self.nv.nvmlDeviceGetPowerUsage(self.h, self.ct.byref(p))
+        return p.value / 1000.0
+
+    def _loop(self):
+        while not self.stop.is_set():
+            w = self.watts()
+            with self.lock:
+                self.samples.append((time.time(), w))
+                if len(self.samples) > 200000:
+                    self.samples = self.samples[-100000:]
+            time.sleep(self.interval)
+
+    def energy(self, t0: float, t1: float) -> float:
+        """Joules between t0 and t1 (trapezoid rule over the samples)."""
+        with self.lock:
+            pts = [(t, w) for t, w in self.samples if t0 <= t <= t1]
+            before = [(t, w) for t, w in self.samples if t < t0][-1:]
+        pts = before + pts
+        if len(pts) < 2:
+            return (pts[0][1] if pts else 0.0) * (t1 - t0)
+        e = 0.0
+        for (ta, wa), (tb, wb) in zip(pts, pts[1:]):
+            a, b = max(ta, t0), min(tb, t1)
+            if b > a:
+                e += (wa + wb) / 2 * (b - a)
+        tl, wl = pts[-1]
+        if t1 > tl:
+            e += wl * (t1 - max(tl, t0))
+        return e
+
+    def idle_watts(self, seconds=5.0) -> float:
+        t0 = time.time()
+        time.sleep(seconds)
+        return self.energy(t0, time.time()) / (time.time() - t0)
+
+
+def gpu_info() -> dict:
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=name,driver_version,memory.total,power.limit",
+             "--format=csv,noheader"], text=True).strip()
+        name, driver, mem, plimit = [x.strip() for x in out.split(",")]
+        return {"gpu": name, "driver": driver, "gpu_memory": mem, "power_limit": plimit}
+    except Exception:
+        return {}
+
+
+def ollama_meta(model: str) -> dict:
+    meta = {}
+    try:
+        meta["ollama_version"] = requests.get("http://127.0.0.1:11434/api/version", timeout=10).json().get("version")
+        tags = requests.get("http://127.0.0.1:11434/api/tags", timeout=10).json().get("models", [])
+        for t in tags:
+            if model in (t.get("name"), t.get("model")) or f"{model}:latest" in (t.get("name"), t.get("model")):
+                meta.update({"model_digest": t.get("digest"), "model_size": t.get("size"),
+                             "model_details": t.get("details")})
+    except Exception as exc:
+        meta["meta_error"] = str(exc)
+    return meta
+
+
+def call_ollama(model, messages, max_tokens, extra, sampler):
+    body = {"model": model, "messages": messages, "stream": False, "think": False,
+            "keep_alive": "30m",
+            "options": {"temperature": 0, "seed": 0, "num_predict": max_tokens, "num_ctx": 8192}}
+    if extra:
+        body.update({k: v for k, v in extra.items() if k != "options"})
+        body["options"].update(extra.get("options", {}))
+    t0 = time.time()
+    r = requests.post(ENDPOINTS["ollama"], json=body, timeout=600)
+    t1 = time.time()
+    r.raise_for_status()
+    d = r.json()
+    ns = 1e9
+    return {
+        "text": d["message"]["content"],
+        "served_model": d.get("model"), "served_provider": "ollama-local",
+        "system_fingerprint": None,
+        "prompt_tokens": d.get("prompt_eval_count"),
+        "completion_tokens": d.get("eval_count"),
+        "reasoning_tokens": None,
+        "finish_reason": d.get("done_reason"),
+        "provider_time": (d.get("total_duration") or 0) / ns,
+        "prompt_eval_time": (d.get("prompt_eval_duration") or 0) / ns,
+        "eval_time": (d.get("eval_duration") or 0) / ns,
+        "load_time": (d.get("load_duration") or 0) / ns,
+        "cost": None,
+        "wall_time": t1 - t0,
+        "gpu_energy_j": sampler.energy(t0, t1) if sampler else None,
+        "t_start": t0, "t_end": t1,
+    }
 
 
 def call_mock(messages, truth_value, rho, rng):
@@ -142,7 +269,7 @@ def call_mock(messages, truth_value, rho, rng):
             "cost": None, "wall_time": 0.0005 * n_in}
 
 
-def run_one(cfg, seed, key, rng):
+def run_one(cfg, seed, keys, rng, sampler=None):
     start, steps, truth = make_task(seed, cfg["lmax"], cfg["difficulty"])
     messages = [{"role": "system", "content": SYSTEM},
                 {"role": "user", "content": f"New order. Current total: {start}. "
@@ -153,8 +280,11 @@ def run_one(cfg, seed, key, rng):
         messages.append({"role": "user", "content": "Tool result: " + json.dumps(step)})
         if cfg["provider"] == "mock":
             res = call_mock(messages, true_total, cfg["mock_rho"], rng)
+        elif cfg["provider"] == "ollama":
+            res = call_ollama(cfg["model"], messages, cfg.get("max_tokens", 40), cfg.get("extra"), sampler)
         else:
-            res = call_api(cfg["provider"], cfg["model"], messages, key, cfg.get("provider_pin"))
+            res = call_api(cfg["provider"], cfg["model"], messages, keys, cfg.get("provider_pin"),
+                           cfg.get("max_tokens", 40), cfg.get("extra"))
         got = parse_total(res["text"])
         messages.append({"role": "assistant", "content": res["text"] or ""})
         records.append({"step": j, "true": true_total, "got": got, "correct": got == true_total,
@@ -166,7 +296,14 @@ def run_one(cfg, seed, key, rng):
 
 
 def run_model(cfg, out_dir: Path):
-    key = None if cfg["provider"] == "mock" else load_key(cfg["provider"])
+    keys = None if cfg["provider"] in ("mock", "ollama") else load_keys(cfg["provider"])
+    sampler, env_meta = None, {}
+    if cfg["provider"] == "ollama":
+        sampler = PowerSampler()
+        env_meta = {**gpu_info(), **ollama_meta(cfg["model"])}
+        # Warm-up call so that model loading is not charged to the first run.
+        call_ollama(cfg["model"], [{"role": "user", "content": "Reply with OK."}], 5, cfg.get("extra"), None)
+        env_meta["idle_watts"] = sampler.idle_watts(5.0)
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = re.sub(r"[^A-Za-z0-9._-]", "_", f"{cfg['provider']}__{cfg['model']}__d{cfg['difficulty']}")
     path = out_dir / f"{tag}.jsonl"
@@ -179,26 +316,36 @@ def run_model(cfg, out_dir: Path):
             if seed in done:
                 continue
             started = datetime.now(timezone.utc).isoformat()
-            recs = run_one(cfg, seed, key, rng)
+            run_t0 = time.time()
+            recs = run_one(cfg, seed, keys, rng, sampler)
+            run_t1 = time.time()
+            run_energy = None
+            if sampler:
+                time.sleep(1.5)  # let the one-second power average catch up
+                run_energy = sampler.energy(run_t0, run_t1 + 1.5)
             first_fail = next((r["step"] for r in recs if not r["correct"]), None)
             f.write(json.dumps({
                 "harness_version": HARNESS_VERSION, "git_commit": commit,
                 "started_utc": started, "provider": cfg["provider"], "model": cfg["model"],
                 "provider_pin": cfg.get("provider_pin"), "difficulty": cfg["difficulty"],
-                "seed": seed, "lmax": cfg["lmax"], "temperature": 0, "system_prompt": SYSTEM,
+                "seed": seed, "lmax": cfg["lmax"], "temperature": 0,
+                "max_tokens": cfg.get("max_tokens", 40), "extra": cfg.get("extra"),
+                "system_prompt": SYSTEM,
+                "env": env_meta, "run_wall_time": run_t1 - run_t0,
+                "run_gpu_energy_j": run_energy,
                 "first_fail": first_fail, "steps": recs}) + "\n")
             f.flush()
             print(f"{cfg['model']} seed {seed}: first failure at step {first_fail}", flush=True)
 
 
 DEFAULTS = {"runs": 15, "lmax": 50, "seed0": 1000, "difficulty": 1, "sleep": 0.0,
-            "mock_rho": 0.97, "provider_pin": None}
+            "mock_rho": 0.97, "provider_pin": None, "max_tokens": 40, "extra": None}
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", help="JSON file with a list of model runs (see pilot.json)")
-    ap.add_argument("--provider", choices=["groq", "openrouter", "mock"])
+    ap.add_argument("--provider", choices=["groq", "openrouter", "ollama", "mock"])
     ap.add_argument("--model")
     ap.add_argument("--provider-pin")
     ap.add_argument("--runs", type=int)
@@ -207,6 +354,8 @@ def main():
     ap.add_argument("--difficulty", type=int, choices=[1, 2])
     ap.add_argument("--sleep", type=float)
     ap.add_argument("--mock-rho", type=float)
+    ap.add_argument("--max-tokens", type=int)
+    ap.add_argument("--only", help="run only this model id from the config")
     ap.add_argument("--out", default=str(HERE / "results"))
     a = ap.parse_args()
 
@@ -220,8 +369,11 @@ def main():
         cfgs = [{**DEFAULTS, "provider": a.provider, "model": a.model}]
     overrides = {k: v for k, v in {"runs": a.runs, "lmax": a.lmax, "seed0": a.seed0,
                                    "difficulty": a.difficulty, "sleep": a.sleep,
-                                   "mock_rho": a.mock_rho, "provider_pin": a.provider_pin}.items()
+                                   "mock_rho": a.mock_rho, "provider_pin": a.provider_pin,
+                                   "max_tokens": a.max_tokens}.items()
                  if v is not None}
+    if a.only:
+        cfgs = [c for c in cfgs if c["model"] == a.only]
     for cfg in cfgs:
         run_model({**cfg, **overrides}, Path(a.out))
 
