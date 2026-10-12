@@ -1,9 +1,11 @@
 # whichone
 
 Two-stage decision support for choosing which LLM should power an agentic
-AI task. Companion code to Siraj and Barbati, *Which One? A Two-Stage
-Multi-Objective and Multi-Attribute Decision Framework for Selecting Large
-Language Models in Agentic AI Systems* (in preparation).
+AI task. Companion code to Siraj and Barbati, *When Is Smaller Greener?
+Right-Sizing Language Models for Agentic AI* (in preparation).
+
+Every computed number, table and figure in the paper can be regenerated with
+`make reproduce`. See [REPRODUCE.md](REPRODUCE.md).
 
 ## The idea
 
@@ -32,9 +34,12 @@ recommendation can be reproduced exactly.
 
 ```
 whichone/core        pure decision engine (pydantic + numpy, no web deps)
+whichone/core/horizon.py  resources per successful task, crossovers, efficient sets by task length
 whichone/catalogue   versioned marketplace snapshots (JSON repository)
 whichone/api         FastAPI service, /v1, OpenAPI docs at /docs
 tests/               includes golden tests reproducing the paper's tables
+paper/               reproduce.py regenerates the paper's numbers, tables and figures
+experiments/         controlled-length pilot: run.py (live models), analyse.py (from logs)
 ```
 
 ## Quickstart

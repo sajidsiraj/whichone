@@ -1,0 +1,47 @@
+# Reproducing the paper
+
+Siraj and Barbati, *When Is Smaller Greener? Right-Sizing Language Models for Agentic AI* (in preparation).
+
+Every computed number, table and figure in the paper is produced by code in this repository. Nothing in the paper is typed in by hand from another source.
+
+## Environment
+
+Python 3.10 or later.
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-lock.txt && pip install -e . --no-deps
+```
+
+`requirements-lock.txt` pins the exact package versions used for the paper. `pip install -e ".[dev,experiments,paper]"` installs the same packages without pins.
+
+## One command
+
+```bash
+make reproduce
+```
+
+This runs the tests, regenerates the Section 3 and 4 numbers, table and figure, and recomputes the pilot results from the committed logs. It needs no API keys and no network access.
+
+## Where each item comes from
+
+| Paper item | Produced by | Output |
+|---|---|---|
+| Section 3, 20-step example (0.36, 0.82, 2.8 and 1.2 attempts, energy advantage) | `paper/reproduce.py` | `paper/output/numbers.json` (`motivation`) |
+| Section 4, crossover lengths 22, 39, 56 | `paper/reproduce.py` | `numbers.json` (`crossovers`) |
+| Section 4, chance-constraint examples (0.54, 0.78, 2 and 10 steps) | `paper/reproduce.py` | `numbers.json` (`chance_constraint`) |
+| Illustrative example: models D and E pruned | `paper/reproduce.py` | `numbers.json` (`stage1`) |
+| Table: efficient models by task length | `paper/reproduce.py` | `paper/output/table_frontier_by_length.tex` |
+| Illustrative example: three task profiles | `paper/reproduce.py` | `numbers.json` (`profiles`) |
+| Figure: parallel lines and trade-off band | `paper/reproduce.py` | `paper/output/fig_parallel_lines.pdf` |
+| Section 6, pilot results | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/summary.json` |
+
+`tests/test_horizon.py` asserts the Section 3 and 4 numbers, so the tests fail if the code and the paper disagree.
+
+## Data
+
+The raw logs of every model run used in the paper are in `experiments/length_pilot/results/`. Each line records the model, provider, served model version, date, git commit of the harness, prompts and every step. The analysis is fully reproducible from these logs. Re-running the models calls live services, which can change without notice, so new runs are a replication, not a reproduction.
+
+## Random seeds
+
+Task generation uses fixed seeds (`seed0` in `pilot.json`). Bootstrap intervals in `analyse.py` use `--seed 7`. Model calls use temperature 0.
