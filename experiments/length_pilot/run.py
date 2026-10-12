@@ -37,7 +37,7 @@ import requests
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-HARNESS_VERSION = "1"
+HARNESS_VERSION = "2"
 
 ENDPOINTS = {
     "groq": "https://api.groq.com/openai/v1/chat/completions",
@@ -53,6 +53,32 @@ SYSTEM = (
     "For action 'remove', decrease it by qty * unit_price. "
     "Reply with JSON only, in the form {\"total\": <integer>}, and nothing else."
 )
+
+
+# Prompt variants. "answer-only" asks for the total alone; "short-working"
+# asks for one line of working before it, which small models need in order
+# to attempt the task at all. Every run logs the variant and the full text.
+PROMPTS = {
+    "answer-only": SYSTEM,
+    "line-total": (
+        "You are an order-processing agent. You keep the running total value of an "
+        "order, in whole pounds. At each step you receive a tool result describing "
+        "one order line, including its line_total. For action 'add', the new total is "
+        "the previous total plus line_total. For action 'remove', it is the previous "
+        "total minus line_total. Reply with JSON only, in the form "
+        "{\"working\": \"<previous total> + <line_total> = <new total>\", \"total\": <new total>} "
+        "(use - for remove), and nothing else. Do not explain."
+    ),
+    "short-working": (
+        "You are an order-processing agent. You keep the running total value of an "
+        "order, in whole pounds. At each step you receive a tool result describing "
+        "one order line. For action 'add', the new total is the previous total plus "
+        "qty * unit_price. For action 'remove', it is the previous total minus "
+        "qty * unit_price. Reply with JSON only, in the form "
+        "{\"working\": \"<previous total> + <qty>*<unit_price> = <new total>\", \"total\": <new total>} "
+        "(use - for remove), and nothing else. Do not explain."
+    ),
+}
 
 
 def load_keys(provider: str) -> list[str]:
@@ -87,14 +113,17 @@ def make_task(seed: int, lmax: int, difficulty: int = 1):
     start = total
     steps, truth = [], []
     for _ in range(lmax):
-        if difficulty == 1:
+        if difficulty in (0, 1):
             qty, price = rng.randint(1, 9), rng.randint(11, 99)
         else:
             qty, price = rng.randint(2, 19), rng.randint(101, 999)
         action = "add" if (rng.random() < 0.65 or total < qty * price) else "remove"
         total += qty * price if action == "add" else -qty * price
-        steps.append({"item": f"SKU-{rng.randint(1000, 9999)}", "action": action,
-                      "qty": qty, "unit_price": price})
+        step = {"item": f"SKU-{rng.randint(1000, 9999)}", "action": action,
+                "qty": qty, "unit_price": price}
+        if difficulty == 0:  # the tool also returns the line total
+            step["line_total"] = qty * price
+        steps.append(step)
         truth.append(total)
     return start, steps, truth
 
@@ -271,7 +300,8 @@ def call_mock(messages, truth_value, rho, rng):
 
 def run_one(cfg, seed, keys, rng, sampler=None):
     start, steps, truth = make_task(seed, cfg["lmax"], cfg["difficulty"])
-    messages = [{"role": "system", "content": SYSTEM},
+    system = PROMPTS[cfg.get("prompt", "answer-only")]
+    messages = [{"role": "system", "content": system},
                 {"role": "user", "content": f"New order. Current total: {start}. "
                                             f"Reply with {{\"total\": {start}}} to confirm."},
                 {"role": "assistant", "content": json.dumps({"total": start})}]
@@ -330,7 +360,8 @@ def run_model(cfg, out_dir: Path):
                 "provider_pin": cfg.get("provider_pin"), "difficulty": cfg["difficulty"],
                 "seed": seed, "lmax": cfg["lmax"], "temperature": 0,
                 "max_tokens": cfg.get("max_tokens", 40), "extra": cfg.get("extra"),
-                "system_prompt": SYSTEM,
+                "prompt": cfg.get("prompt", "answer-only"),
+                "system_prompt": PROMPTS[cfg.get("prompt", "answer-only")],
                 "env": env_meta, "run_wall_time": run_t1 - run_t0,
                 "run_gpu_energy_j": run_energy,
                 "first_fail": first_fail, "steps": recs}) + "\n")
@@ -339,7 +370,8 @@ def run_model(cfg, out_dir: Path):
 
 
 DEFAULTS = {"runs": 15, "lmax": 50, "seed0": 1000, "difficulty": 1, "sleep": 0.0,
-            "mock_rho": 0.97, "provider_pin": None, "max_tokens": 40, "extra": None}
+            "mock_rho": 0.97, "provider_pin": None, "max_tokens": 40, "extra": None,
+            "prompt": "answer-only"}
 
 
 def main():
@@ -351,10 +383,11 @@ def main():
     ap.add_argument("--runs", type=int)
     ap.add_argument("--lmax", type=int)
     ap.add_argument("--seed0", type=int)
-    ap.add_argument("--difficulty", type=int, choices=[1, 2])
+    ap.add_argument("--difficulty", type=int, choices=[0, 1, 2])
     ap.add_argument("--sleep", type=float)
     ap.add_argument("--mock-rho", type=float)
     ap.add_argument("--max-tokens", type=int)
+    ap.add_argument("--prompt", choices=sorted(PROMPTS))
     ap.add_argument("--only", help="run only this model id from the config")
     ap.add_argument("--out", default=str(HERE / "results"))
     a = ap.parse_args()
@@ -370,7 +403,7 @@ def main():
     overrides = {k: v for k, v in {"runs": a.runs, "lmax": a.lmax, "seed0": a.seed0,
                                    "difficulty": a.difficulty, "sleep": a.sleep,
                                    "mock_rho": a.mock_rho, "provider_pin": a.provider_pin,
-                                   "max_tokens": a.max_tokens}.items()
+                                   "max_tokens": a.max_tokens, "prompt": a.prompt}.items()
                  if v is not None}
     if a.only:
         cfgs = [c for c in cfgs if c["model"] == a.only]
