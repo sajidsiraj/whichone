@@ -46,6 +46,8 @@ WANT = {"tool": "refund_item", "order": "B7", "item": "mug", "qty": 3}
     ('{"tool": "refund_item", "order": "B7", "item": "mug", "qty": 3}', True),
     ('```json\n{"tool": "refund_item", "order": "b7", "item": "Mug", "qty": "3"}\n```', True),
     ('{"tool": "refund_item", "args": {"order": "B7", "item": "mug", "qty": 3}}', True),
+    ('{"tool": "refund_item(order, item, qty)", "order": "B7", "item": "mug", "qty": 3}', True),
+    ('{"tool": "deliver_order", "order": "B7", "item": "mug", "qty": 3}', False),
     ('{"tool": "refund_item", "order": "B7", "item": "mug", "qty": 2}', False),
     ('{"tool": "remove_item", "order": "B7", "item": "mug", "qty": 3}', False),
     ('{"tool": "refund_item", "order": "B7", "item": "mug"}', False),

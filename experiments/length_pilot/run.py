@@ -229,11 +229,12 @@ def parse_call(text: str | None):
 
 def call_correct(got, want) -> bool:
     """Right tool and right arguments. Names compare without case or spaces,
-    quantities as integers; extra keys are ignored."""
+    quantities as integers; extra keys are ignored. A tool name written with
+    its signature, such as "set_address(order, city)", counts as the name."""
     if not isinstance(got, dict):
         return False
     norm = lambda v: str(v).strip().lower()
-    if norm(got.get("tool")) != want["tool"]:
+    if norm(got.get("tool")).split("(")[0].strip() != want["tool"]:
         return False
     for k in TOOL_ARGS[want["tool"]]:
         g = got.get(k)
