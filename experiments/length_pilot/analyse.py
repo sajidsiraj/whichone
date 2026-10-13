@@ -243,6 +243,22 @@ def shown_models(summ, keys, lmax):
     return [k for k in keys if k in shown]
 
 
+def cheapest_by_length(summ, keys, lmax, curve="per_success_fitted"):
+    """Intervals of task length (first L, last L, model) over which one model
+    uses the least energy per successful task. Lengths where every model has
+    infinite energy per success (no successful run) are left out."""
+    out = []
+    for L in range(1, lmax + 1):
+        k = min(keys, key=lambda k: summ[k][curve]["energy"][L - 1])
+        if math.isinf(summ[k][curve]["energy"][L - 1]):
+            continue
+        if out and out[-1][2] == k and out[-1][1] == L - 1:
+            out[-1] = (out[-1][0], L, k)
+        else:
+            out.append((L, L, k))
+    return out
+
+
 def crossover_table(pairs, name, size, path: Path):
     lines = [r"\begin{tabular}{llrrrrc}", r"\toprule",
              r"Less reliable model & More reliable model & Energy ratio & \multicolumn{4}{c}{Energy crossover $L^\ast$ (steps)} \\",
@@ -295,9 +311,11 @@ def figure(summ, keys, path: Path, lmax):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    colours = ["#000000", "#E69F00", "#56B4E9", "#009E73", "#CC79A7"]
-    markers = ["o", "s", "^", "D", "v"]
-    styles = ["-", "--", "-.", ":", (0, (5, 1, 1, 1, 1, 1))]
+    colours = ["#000000", "#E69F00", "#56B4E9", "#009E73", "#CC79A7", "#D55E00", "#0072B2"]
+    markers = ["o", "s", "^", "D", "v", "P", "X"]
+    styles = ["-", "--", "-.", ":", (0, (5, 1, 1, 1, 1, 1)), (0, (3, 1)), (0, (1, 2))]
+    if len(keys) > len(colours):
+        raise ValueError(f"{len(keys)} models to draw but only {len(colours)} styles")
     fig, ax = plt.subplots(figsize=(5.8, 3.8))
     Ls = list(range(1, lmax + 1))
     for k, col, mk, ls in zip(sorted(keys, key=lambda k: summ[k]["per_step_mean"]["energy"]),
@@ -319,7 +337,9 @@ def figure(summ, keys, path: Path, lmax):
         ax.plot([], [], linestyle=ls, marker=mk, color=col, markersize=3.5,
                 label=display_name(k))
     ax.set_yscale("log")
-    ax.set_ylim(0.01, 100)
+    # top of the axis: a power of ten above twice the lowest curve at lmax
+    best = min(summ[k]["per_success_fitted"]["energy"][lmax - 1] for k in keys) / 1000
+    ax.set_ylim(0.01, 10 ** math.ceil(math.log10(2 * best)))
     ax.set_xlim(0, lmax + 2)
     ax.set_xlabel("Task length $L$ (steps)")
     ax.set_ylabel("GPU energy per successful task (kJ)")
@@ -333,23 +353,31 @@ DEVELOPERS = {"Qwen3": "Qwen (Alibaba)", "Qwen3.8": "Qwen (Alibaba)", "GLM-4": "
               "Gemma 3": "Gemma (Google)", "Ministral 3": "Ministral (Mistral)"}
 
 
-# label positions (points) where the default would overlap a neighbour
-LABEL_OFFSET = {"llama3.2:3b": (-5, 6), "qwen3:1.7b": (-5, -3), "ministral-3:3b": (-5, -12),
-                "gemma3:4b": (5, -11), "llama3.1:8b": (5, 4), "ministral-3:8b": (-5, -9),
-                "qwen3:14b": (5, -7), "ministral-3:14b": (-5, 4), "qwen3.8-27b": (-5, 4)}
+# label positions (points), per task, where the default would overlap a neighbour
+LABEL_OFFSET = {
+    "d0": {"llama3.2:3b": (-5, 6), "qwen3:1.7b": (-5, -3), "ministral-3:3b": (-5, -12),
+           "gemma3:4b": (5, -11), "llama3.1:8b": (5, 4), "ministral-3:8b": (-5, -9),
+           "qwen3:14b": (5, -7), "ministral-3:14b": (-5, 4), "qwen3.8-27b": (-5, 4)},
+    "tools": {"llama3.2:1b": (-5, 4), "qwen3:0.6b": (5, -6), "qwen3:1.7b": (-5, -3),
+              "llama3.2:3b": (-5, 6), "ministral-3:3b": (-5, 6), "gemma3:4b": (5, -9),
+              "qwen3:8b": (-5, -10), "glm4:9b": (5, -3), "llama3.1:8b": (5, 4),
+              "ministral-3:8b": (-5, 4), "qwen3:14b": (5, -7), "gemma3:12b": (-5, 4),
+              "ministral-3:14b": (-5, 4), "qwen3.8-27b": (-5, 4)}}
 
 
-def scatter(summ, keys, dominated, path: Path):
+def scatter(summ, keys, dominated, path: Path, task="d0"):
     """The models on two per-step axes: energy per step and expected steps
     before the first error, 1/(1 - rho). One colour and marker per developer;
     models beaten per step by another model are drawn hollow."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import matplotlib.ticker
 
     devs = sorted({DEVELOPERS.get(family(k), family(k)) for k in keys})
     style = dict(zip(devs, zip(["#E69F00", "#56B4E9", "#009E73", "#CC79A7", "#000000", "#D55E00"],
                                ["o", "s", "^", "D", "v", "P"])))
+    offset = LABEL_OFFSET.get(task, {})
     fig, ax = plt.subplots(figsize=(5.8, 3.8))
     for k in keys:
         m = summ[k]
@@ -358,13 +386,17 @@ def scatter(summ, keys, dominated, path: Path):
         face = "none" if k in dominated else col
         ax.plot([x], [y], mk, markerfacecolor=face, markeredgecolor=col, markersize=6)
         ax.annotate(display_name(k).replace("\\_", "_"), (x, y), textcoords="offset points",
-                    xytext=LABEL_OFFSET.get(k.split("__")[0], (4, 3)), fontsize=6.5,
-                    ha="right" if LABEL_OFFSET.get(k.split("__")[0], (1,))[0] < 0 else "left")
+                    xytext=offset.get(k.split("__")[0], (4, 3)), fontsize=6.5,
+                    ha="right" if offset.get(k.split("__")[0], (1,))[0] < 0 else "left")
     for d in devs:
         col, mk = style[d]
         ax.plot([], [], mk, color=col, markersize=6, linestyle="none", label=d)
     ax.set_xscale("log")
     ax.set_yscale("log")
+    for axis in (ax.xaxis, ax.yaxis):  # plain numbers at 1, 2, 5, 10, ...
+        axis.set_major_locator(matplotlib.ticker.LogLocator(base=10, subs=(1, 2, 5)))
+        axis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
+        axis.set_minor_formatter(matplotlib.ticker.NullFormatter())
     ax.set_xlabel("GPU energy per step (J)")
     ax.set_ylabel(r"Expected steps before first error, $1/(1-\hat\rho)$")
     ax.legend(frameon=False, fontsize=7.5, loc="upper left")
@@ -410,6 +442,7 @@ def main():
     shown = shown_models(summ, keys, lmax)
     print("dominated per step:", dominated)
     print("shown in the length figure:", shown)
+    print("least energy per successful task (fitted):", cheapest_by_length(summ, keys, lmax))
 
     pairs = []
     for i, ka in enumerate(keys):
@@ -443,12 +476,15 @@ def main():
         slim[k]["energy_per_success"] = summ[k]["per_success"]["energy"]
     (out / f"summary{sfx}.json").write_text(json.dumps(
         {"lmax": lmax, "bootstrap": a.boot, "seed": a.seed, "order": keys, "models": slim,
-         "dominated_per_step": dominated, "shown": shown, "pairs": pairs},
+         "dominated_per_step": dominated, "shown": shown,
+         "cheapest_energy_fitted": cheapest_by_length(summ, keys, lmax),
+         "cheapest_energy_observed": cheapest_by_length(summ, keys, lmax, "per_success"),
+         "pairs": pairs},
         indent=1))
     tables(summ, keys, pairs, out, lmax, shown, dominated, sfx)
     if not a.no_figure:
         figure(summ, shown, out / f"fig_pilot_energy{sfx}.pdf", lmax)
-        scatter(summ, keys, dominated, out / f"fig_pilot_models{sfx}.pdf")
+        scatter(summ, keys, dominated, out / f"fig_pilot_models{sfx}.pdf", a.task)
     print(f"wrote summary{sfx}.json, table_pilot{sfx}.tex, table_pilot_crossovers{sfx}.tex, "
           f"table_pilot_crossovers_all{sfx}.tex, fig_pilot_energy{sfx}.pdf, fig_pilot_models{sfx}.pdf to {out}")
 
