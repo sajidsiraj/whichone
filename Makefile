@@ -18,6 +18,7 @@ pilot-run:
 
 pilot-run-local:
 	$(PY) experiments/length_pilot/run.py --config experiments/length_pilot/pilot_local.json
+	$(PY) experiments/length_pilot/run.py --config experiments/length_pilot/pilot_mixed.json
 
 reproduce: test paper pilot-analysis
 
@@ -28,7 +29,9 @@ reproduce: test paper pilot-analysis
 PAPER_FILES = paper/output/table_frontier_by_length.tex paper/output/fig_parallel_lines.pdf \
 	experiments/length_pilot/output/table_pilot.tex \
 	experiments/length_pilot/output/table_pilot_crossovers.tex \
-	experiments/length_pilot/output/fig_pilot_energy.pdf
+	experiments/length_pilot/output/table_pilot_crossovers_all.tex \
+	experiments/length_pilot/output/fig_pilot_energy.pdf \
+	experiments/length_pilot/output/fig_pilot_models.pdf
 
 overleaf:
 	@test -n "$(OVERLEAF)" || { echo 'Set OVERLEAF="/path/to/paper/folder"'; exit 1; }

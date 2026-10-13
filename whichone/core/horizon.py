@@ -80,10 +80,13 @@ def crossover_length(rho_a: float, rho_b: float, r_a: float, r_b: float
 
     Defined when a is less reliable but cheaper per step on that resource
     (rho_a < rho_b, r_a < r_b). Returns None otherwise: then one model is
-    better on that resource at every length.
+    better on that resource at every length. If a never completes a step
+    (rho_a = 0) the crossover is 0: b is better at every length.
     """
     if not (rho_a < rho_b and r_a < r_b):
         return None
+    if rho_a <= 0:
+        return 0.0
     return math.log(r_b / r_a) / math.log(rho_b / rho_a)
 
 

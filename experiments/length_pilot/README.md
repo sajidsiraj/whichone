@@ -11,11 +11,12 @@ Each run is one multi-turn agent task with an exact number of steps (`lmax`). At
 | File | Role |
 |---|---|
 | `run.py` | Runs the models and writes raw logs to `results/` (needs API keys) |
-| `pilot_local.json` | The model list and settings of the main pilot in the paper (local GPU) |
+| `pilot_local.json` | The model list and settings of the main pilot in the paper (local GPU): five Qwen models |
+| `pilot_mixed.json` | The second part of the main pilot: ten models from four other developers, same settings |
 | `pilot.json` | Settings for a hosted-API run (Groq), not used for the paper results so far |
 | `results/*.jsonl` | Raw logs, one line per run, with model, provider, date, git commit and every step. Under version control. |
 | `analyse.py` | Computes every pilot number, table and figure in the paper from `results/` (no keys or GPU needed) |
-| `output/` | Written by `analyse.py`: `summary.json`, `table_pilot.tex`, `table_pilot_crossovers.tex`, `fig_pilot_energy.pdf`. Not under version control. |
+| `output/` | Written by `analyse.py`: `summary.json`, `table_pilot.tex`, `table_pilot_crossovers.tex`, `table_pilot_crossovers_all.tex`, `fig_pilot_energy.pdf`, `fig_pilot_models.pdf`. Not under version control. |
 | `prices.json` | Provider prices per million tokens, used when billed cost is not returned |
 | `energy.json` | Third-party energy estimates per output token, with sources. Reported as estimates. |
 
@@ -25,7 +26,7 @@ From the repository root:
 
 ```bash
 make pilot-analysis   # recompute all pilot numbers from the committed logs
-make pilot-run-local  # re-run the main pilot on a local GPU through Ollama
+make pilot-run-local  # re-run the main pilot on a local GPU through Ollama (both configurations)
 make pilot-run        # hosted-API run (needs GROQ_API_KEY or OPENROUTER_API_KEY)
 ```
 
@@ -35,13 +36,13 @@ Keys are read from the environment or from the repository's `.env`, which is not
 
 ## Main pilot: setting
 
-The committed logs `results/ollama__*__d0.jsonl` were produced on 13 October 2026 by harness version 4 (commit 079af42), with:
+The committed logs `results/ollama__*__d0.jsonl` were produced on 13 October 2026 by harness version 4: the five Qwen models with `pilot_local.json` (commit 079af42), and the ten other models with `pilot_mixed.json` (commit 1a2c2a4; `run.py` is the same in both commits). Both used:
 
 | Item | Value |
 |---|---|
 | GPU | NVIDIA GeForce RTX 5060 Ti (16 GB), driver 595.99.02 |
 | Server | Ollama 0.35.1, each model alone on the GPU and fully in GPU memory (checked before each model) |
-| Models (Ollama digest) | qwen3:0.6b 7df6b6e09427, qwen3:1.7b 8f68893c685c, qwen3:8b 500a1f067a9f, qwen3:14b bdbd181c33f2, qwen3.8-27b 99322ec1f845 |
+| Models (Ollama digest) | qwen3:0.6b 7df6b6e09427, qwen3:1.7b 8f68893c685c, qwen3:8b 500a1f067a9f, qwen3:14b bdbd181c33f2, qwen3.8-27b 99322ec1f845; gemma3:1b 97558784bdc9, gemma3:4b 68ceab7e468a, gemma3:12b b92b218582c5, llama3.2:1b baf6a787fdff, llama3.2:3b a80c4f17acd5, llama3.1:8b 46e0c10c039e, ministral-3:3b f04aa1c738f6, ministral-3:8b 1922accd5827, ministral-3:14b 4760c35aeb9d, glm4:9b 5b699761eca5 |
 | Task | difficulty 0 (the tool result gives `line_total`), prompt `line-total`, 150 steps, 15 runs per model (seeds 1000 to 1014), temperature 0, at most 60 output tokens, context 16384 |
 | Energy | GPU board power from NVML, sampled at 20 Hz and integrated over each call. Covers the GPU board only, not CPU, memory or cooling. |
 | Time | server-reported time per call |

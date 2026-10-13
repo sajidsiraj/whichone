@@ -43,6 +43,7 @@ def test_crossovers_of_worked_pair():
     assert crossover_length(0.95, 0.99, 0.2, 1.0) == pytest.approx(39.0, abs=0.05)
     assert crossover_length(0.95, 0.99, 0.1, 1.0) == pytest.approx(55.8, abs=0.05)
     assert crossover_length(0.99, 0.95, 0.1, 1.0) is None
+    assert crossover_length(0.0, 0.95, 0.1, 1.0) == 0.0  # a never completes a step
 
 
 def test_chance_constraint_examples():

@@ -18,7 +18,9 @@ Outputs:
   output/summary.json      all numbers quoted in the paper
   output/table_pilot.tex   per-model table
   output/table_pilot_crossovers.tex
+  output/table_pilot_crossovers_all.tex  every pair that survives the per-step screen
   output/fig_pilot_energy.pdf  energy per successful task against task length
+  output/fig_pilot_models.pdf  all models on energy per step and steps before an error
 
 Three crossover lengths are reported for each pair (a less reliable than b):
   observed     the shortest L from which b uses less per successful task than a
@@ -195,16 +197,63 @@ def ci(b):
     return f"{lo}--{hi}" + (f" ({b['share_none'] * 100:.0f}\\% none)" if b["share_none"] > 0.025 else "")
 
 
+FAMILIES = {"qwen3": "Qwen3", "qwen3.8": "Qwen3.8", "gemma3": "Gemma 3",
+            "llama3.1": "Llama 3.1", "llama3.2": "Llama 3.2",
+            "ministral-3": "Ministral 3", "glm4": "GLM-4"}
+
+
 def display_name(key):
-    """Model name as printed in the paper: qwen3:1.7b -> Qwen3 1.7B."""
+    """Model name as printed in the paper: qwen3:1.7b -> Qwen3 1.7B,
+    ministral-3:8b -> Ministral 3 8B. Unknown names are printed as logged."""
     model = key.split("__")[0]
-    m = re.fullmatch(r"([a-z]+[0-9.]*)[:-]([0-9.]+b)", model)
-    if not m:  # other names are printed as logged
+    m = re.fullmatch(r"(.+?)[:-]([0-9.]+b)", model)
+    if not m or m.group(1) not in FAMILIES:
         return model.replace("_", r"\_")
-    return f"{m.group(1).capitalize()} {m.group(2).upper()}"
+    return f"{FAMILIES[m.group(1)]} {m.group(2).upper()}"
 
 
-def tables(summ, keys, pairs, out: Path, lmax):
+def family(key):
+    """Developer family of a model, for grouping in tables and figures."""
+    name = display_name(key)
+    return name.rsplit(" ", 1)[0] if " " in name else name
+
+
+def per_step_dominated(summ, keys):
+    """Models another model beats per step: at least as reliable and using no
+    more energy or time per step, better on one (cost is not measured locally).
+    Such a model is worse at every task length (Observation 2)."""
+    q = lambda k: (-summ[k]["rho_hat"], summ[k]["per_step_mean"]["energy"],
+                   summ[k]["per_step_mean"]["time"])
+    beats = lambda a, b: all(x <= y for x, y in zip(q(a), q(b))) and q(a) != q(b)
+    return {k: sorted(o for o in keys if beats(o, k)) for k in keys
+            if any(beats(o, k) for o in keys)}
+
+
+def shown_models(summ, keys, lmax):
+    """Models drawn in the length figure and listed in the paper's crossover
+    table: each model that uses the least energy per successful task at some
+    length (fitted curve), and the most reliable model as a reference."""
+    shown = {max(keys, key=lambda k: summ[k]["rho_hat"])}
+    for L in range(1, lmax + 1):
+        shown.add(min(keys, key=lambda k: summ[k]["per_success_fitted"]["energy"][L - 1]))
+    return [k for k in keys if k in shown]
+
+
+def crossover_table(pairs, name, size, path: Path):
+    lines = [r"\begin{tabular}{llrrrrc}", r"\toprule",
+             r"Less reliable model & More reliable model & Energy ratio & \multicolumn{4}{c}{Energy crossover $L^\ast$ (steps)} \\",
+             r" & & per step & closed form & fitted & observed & observed 95\% CI \\", r"\midrule"]
+    for p in sorted(pairs, key=lambda p: (size(p["a"]), size(p["b"]))):
+        c = p["resources"].get("energy")
+        if not c or p["status"] != "crossover":
+            continue
+        lines.append(f"{name(p['a'])} & {name(p['b'])} & {c['per_step_ratio']:.2f} & "
+                     f"{fmt_L(c['closed_form'])} & {fmt_L(c['fitted'])} & {fmt_L(c['observed'])} & {ci(c['observed_boot'])} \\\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    path.write_text("\n".join(lines) + "\n")
+
+
+def tables(summ, keys, pairs, out: Path, lmax, shown, dominated):
     """Tables are written without float or caption, so the paper can
     \\input them inside its own table environment."""
     name = display_name
@@ -216,23 +265,18 @@ def tables(summ, keys, pairs, out: Path, lmax):
         m = summ[k]
         lo, hi = m["rho_ci95"]
         e = [m["per_success"]["energy"][L - 1] / 1000 for L in (10, 20, 50)]
-        lines.append(f"{name(k)} & {m['rho_hat']:.4f} & {lo:.4f}--{hi:.4f} & "
+        mark = r"$^\dagger$" if k in dominated else ""
+        lines.append(f"{name(k)}{mark} & {m['rho_hat']:.4f} & {lo:.4f}--{hi:.4f} & "
                      f"{m['per_step_mean']['energy']:.0f} & {m['per_step_mean']['time']:.2f} & "
                      + " & ".join(r"$\infty$" if math.isinf(x) else f"{x:.1f}" for x in e) + r" \\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     (out / "table_pilot.tex").write_text("\n".join(lines) + "\n")
 
-    lines = [r"\begin{tabular}{llrrrrc}", r"\toprule",
-             r"Smaller model & Larger model & Energy ratio & \multicolumn{4}{c}{Energy crossover $L^\ast$ (steps)} \\",
-             r" & & per step & closed form & fitted & observed & observed 95\% CI \\", r"\midrule"]
-    for p in sorted(pairs, key=lambda p: (size(p["a"]), size(p["b"]))):
-        c = p["resources"].get("energy")
-        if not c or p["status"] != "crossover":
-            continue
-        lines.append(f"{name(p['a'])} & {name(p['b'])} & {c['per_step_ratio']:.2f} & "
-                     f"{fmt_L(c['closed_form'])} & {fmt_L(c['fitted'])} & {fmt_L(c['observed'])} & {ci(c['observed_boot'])} \\\\")
-    lines += [r"\bottomrule", r"\end{tabular}"]
-    (out / "table_pilot_crossovers.tex").write_text("\n".join(lines) + "\n")
+    crossover_table([p for p in pairs if p["a"] in shown and p["b"] in shown], name, size,
+                    out / "table_pilot_crossovers.tex")
+    # every pair of models that survive the per-step screen, for the appendix
+    crossover_table([p for p in pairs if p["a"] not in dominated and p["b"] not in dominated],
+                    name, size, out / "table_pilot_crossovers_all.tex")
 
 
 MIN_SUCCESSES = 3  # observed points from fewer successful runs are drawn hollow
@@ -278,6 +322,50 @@ def figure(summ, keys, path: Path, lmax):
     fig.savefig(path)
 
 
+DEVELOPERS = {"Qwen3": "Qwen (Alibaba)", "Qwen3.8": "Qwen (Alibaba)", "GLM-4": "GLM (Zhipu)",
+              "Llama 3.1": "Llama (Meta)", "Llama 3.2": "Llama (Meta)",
+              "Gemma 3": "Gemma (Google)", "Ministral 3": "Ministral (Mistral)"}
+
+
+# label positions (points) where the default would overlap a neighbour
+LABEL_OFFSET = {"llama3.2:3b": (-5, 6), "qwen3:1.7b": (-5, -3), "ministral-3:3b": (-5, -12),
+                "gemma3:4b": (5, -11), "llama3.1:8b": (5, 4), "ministral-3:8b": (-5, -9),
+                "qwen3:14b": (5, -7), "ministral-3:14b": (-5, 4), "qwen3.8-27b": (-5, 4)}
+
+
+def scatter(summ, keys, dominated, path: Path):
+    """The models on two per-step axes: energy per step and expected steps
+    before the first error, 1/(1 - rho). One colour and marker per developer;
+    models beaten per step by another model are drawn hollow."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    devs = sorted({DEVELOPERS.get(family(k), family(k)) for k in keys})
+    style = dict(zip(devs, zip(["#E69F00", "#56B4E9", "#009E73", "#CC79A7", "#000000", "#D55E00"],
+                               ["o", "s", "^", "D", "v", "P"])))
+    fig, ax = plt.subplots(figsize=(5.8, 3.8))
+    for k in keys:
+        m = summ[k]
+        col, mk = style[DEVELOPERS.get(family(k), family(k))]
+        x, y = m["per_step_mean"]["energy"], 1 / max(1 - m["rho_hat"], 1e-4)
+        face = "none" if k in dominated else col
+        ax.plot([x], [y], mk, markerfacecolor=face, markeredgecolor=col, markersize=6)
+        ax.annotate(display_name(k).replace("\\_", "_"), (x, y), textcoords="offset points",
+                    xytext=LABEL_OFFSET.get(k.split("__")[0], (4, 3)), fontsize=6.5,
+                    ha="right" if LABEL_OFFSET.get(k.split("__")[0], (1,))[0] < 0 else "left")
+    for d in devs:
+        col, mk = style[d]
+        ax.plot([], [], mk, color=col, markersize=6, linestyle="none", label=d)
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("GPU energy per step (J)")
+    ax.set_ylabel(r"Expected steps before first error, $1/(1-\hat\rho)$")
+    ax.legend(frameon=False, fontsize=7.5, loc="upper left")
+    fig.tight_layout()
+    fig.savefig(path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", default=str(HERE / "results"))
@@ -308,6 +396,11 @@ def main():
                                               for k in RESOURCES}} for L in REPORT_L if L <= lmax}
         print(f"{key}: runs={len(rs)} rho_hat={m['rho_hat']:.4f} CI95={tuple(round(x, 4) for x in m['rho_ci95'])} "
               f"J/step={m['per_step_mean']['energy']:.1f} s/step={m['per_step_mean']['time']:.3f}")
+
+    dominated = per_step_dominated(summ, keys)
+    shown = shown_models(summ, keys, lmax)
+    print("dominated per step:", dominated)
+    print("shown in the length figure:", shown)
 
     pairs = []
     for i, ka in enumerate(keys):
@@ -340,12 +433,15 @@ def main():
         slim[k]["S"] = summ[k]["S"]
         slim[k]["energy_per_success"] = summ[k]["per_success"]["energy"]
     (out / "summary.json").write_text(json.dumps(
-        {"lmax": lmax, "bootstrap": a.boot, "seed": a.seed, "order": keys, "models": slim, "pairs": pairs},
+        {"lmax": lmax, "bootstrap": a.boot, "seed": a.seed, "order": keys, "models": slim,
+         "dominated_per_step": dominated, "shown": shown, "pairs": pairs},
         indent=1))
-    tables(summ, keys, pairs, out, lmax)
+    tables(summ, keys, pairs, out, lmax, shown, dominated)
     if not a.no_figure:
-        figure(summ, keys, out / "fig_pilot_energy.pdf", lmax)
-    print(f"wrote summary.json, table_pilot.tex, table_pilot_crossovers.tex, fig_pilot_energy.pdf to {out}")
+        figure(summ, shown, out / "fig_pilot_energy.pdf", lmax)
+        scatter(summ, keys, dominated, out / "fig_pilot_models.pdf")
+    print(f"wrote summary.json, table_pilot.tex, table_pilot_crossovers.tex, "
+          f"table_pilot_crossovers_all.tex, fig_pilot_energy.pdf, fig_pilot_models.pdf to {out}")
 
 
 if __name__ == "__main__":
