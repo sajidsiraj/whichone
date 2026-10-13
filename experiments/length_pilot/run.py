@@ -37,7 +37,7 @@ import requests
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-HARNESS_VERSION = "4"
+HARNESS_VERSION = "5"  # 5 adds the tools task; the order task is as in 4
 
 ENDPOINTS = {
     "groq": "https://api.groq.com/openai/v1/chat/completions",
@@ -126,6 +126,126 @@ def make_task(seed: int, lmax: int, difficulty: int = 1):
         steps.append(step)
         truth.append(total)
     return start, steps, truth
+
+
+# Second task family: tool calls in a customer-service conversation. The
+# account starts with a few orders; at each step the customer asks for one
+# change and the model must reply with the one tool call that makes it. About
+# half the requests refer back to earlier ones ("that same order", "the same
+# city as order X", "refund every lamp"), so the model has to track the
+# state of the account through the conversation. Tool results only say "ok",
+# so they give nothing away.
+
+TOOLS_SYSTEM = (
+    "You are a customer-service agent for an online shop. You change orders only "
+    "by calling tools. Tools:\n"
+    "set_address(order, city): deliver the order to that city\n"
+    "add_item(order, item, qty): add qty units of an item to the order\n"
+    "remove_item(order, item, qty): take qty units of an item out of the order\n"
+    "refund_item(order, item, qty): refund an item and take it out of the order; "
+    "qty must be the number of units of that item the order holds now\n"
+    "Rules: \"that same order\" means the order of the customer's previous request. "
+    "Keep track of every change, because tool results only say ok. "
+    "For each customer message, reply with exactly one tool call as JSON only, in the form "
+    "{\"tool\": \"<name>\", \"order\": \"<order>\", ...arguments}, for example "
+    "{\"tool\": \"add_item\", \"order\": \"B7\", \"item\": \"mug\", \"qty\": 2}. Do not explain."
+)
+ITEMS = ["mug", "lamp", "towel", "kettle", "pillow", "candle", "plate", "rug",
+         "clock", "vase", "jug", "bowl"]
+CITIES = ["Leeds", "York", "Bath", "Derby", "Exeter", "Hull", "Bristol", "Leicester",
+          "Norwich", "Oxford", "Preston", "Durham"]
+TOOL_ARGS = {"set_address": ("order", "city"), "add_item": ("order", "item", "qty"),
+             "remove_item": ("order", "item", "qty"), "refund_item": ("order", "item", "qty")}
+
+
+def make_tools_task(seed: int, lmax: int):
+    """Deterministic tools task: the opening account, then one customer
+    message and the one correct tool call per step."""
+    rng = random.Random(seed)
+    ids = rng.sample([f"{c}{d}" for c in "ABCDEFGH" for d in range(1, 10)], 5)
+    orders = {o: {"city": rng.choice(CITIES),
+                  "items": {i: rng.randint(1, 4) for i in rng.sample(ITEMS, rng.randint(2, 3))}}
+              for o in ids}
+    intro = "Account opened. Orders:\n" + "\n".join(
+        f"{o}: " + ", ".join(f"{q} x {i}" for i, q in v["items"].items()) + f"; deliver to {v['city']}"
+        for o, v in orders.items())
+    last = None
+    steps, truth = [], []
+    kinds = ["address", "same_address", "add", "add_same", "remove", "refund"]
+    weights = [0.12, 0.16, 0.20, 0.16, 0.16, 0.20]
+    while len(steps) < lmax:
+        kind = rng.choices(kinds, weights)[0]
+        o = last if kind == "add_same" else rng.choice(ids)
+        if o is None:
+            continue
+        held = orders[o]["items"]
+        if kind in ("remove", "refund") and not held:
+            continue
+        if kind == "address":
+            city = rng.choice([c for c in CITIES if c != orders[o]["city"]])
+            text, call = f"Please deliver order {o} to {city} instead.", {"tool": "set_address", "order": o, "city": city}
+            orders[o]["city"] = city
+        elif kind == "same_address":
+            p = rng.choice([x for x in ids if x != o])
+            city = orders[p]["city"]
+            text, call = f"Send order {o} to the same city as order {p}.", {"tool": "set_address", "order": o, "city": city}
+            orders[o]["city"] = city
+        elif kind in ("add", "add_same"):
+            item, q = rng.choice(ITEMS), rng.randint(1, 3)
+            where = "that same order" if kind == "add_same" else f"order {o}"
+            text, call = f"Add {q} x {item} to {where}.", {"tool": "add_item", "order": o, "item": item, "qty": q}
+            held[item] = held.get(item, 0) + q
+        elif kind == "remove":
+            item = rng.choice(sorted(held))
+            q = rng.randint(1, held[item])
+            text, call = f"Take {q} x {item} out of order {o}.", {"tool": "remove_item", "order": o, "item": item, "qty": q}
+            held[item] -= q
+            if not held[item]:
+                del held[item]
+        else:
+            item = rng.choice(sorted(held))
+            text, call = f"Refund every {item} in order {o}.", {"tool": "refund_item", "order": o, "item": item, "qty": held[item]}
+            del held[item]
+        last = o
+        steps.append(text)
+        truth.append(call)
+    return intro, steps, truth
+
+
+def parse_call(text: str | None):
+    """The first JSON object in a reply (code fences allowed), or None."""
+    t = re.sub(r"```(?:json)?", "", text or "")
+    start = t.find("{")
+    if start < 0:
+        return None
+    try:
+        d, _ = json.JSONDecoder().raw_decode(t[start:])
+    except ValueError:
+        return None
+    if isinstance(d, dict) and isinstance(d.get("args"), dict):  # {"tool":..., "args": {...}}
+        d = {"tool": d.get("tool"), **d["args"]}
+    return d if isinstance(d, dict) else None
+
+
+def call_correct(got, want) -> bool:
+    """Right tool and right arguments. Names compare without case or spaces,
+    quantities as integers; extra keys are ignored."""
+    if not isinstance(got, dict):
+        return False
+    norm = lambda v: str(v).strip().lower()
+    if norm(got.get("tool")) != want["tool"]:
+        return False
+    for k in TOOL_ARGS[want["tool"]]:
+        g = got.get(k)
+        if k == "qty":
+            try:
+                if int(g) != want[k] or float(g) != want[k]:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        elif norm(g) != norm(want[k]):
+            return False
+    return True
 
 
 def parse_total(text: str | None):
@@ -329,24 +449,39 @@ def call_ollama(model, messages, max_tokens, extra, sampler):
 
 def call_mock(messages, truth_value, rho, rng):
     """Tests the harness only. Never used for results in the paper."""
-    val = truth_value if rng.random() < rho else truth_value + rng.choice([-10, 10, 100])
+    if isinstance(truth_value, dict):  # tools task: a wrong quantity
+        val = truth_value if rng.random() < rho else {**truth_value, "qty": 99}
+    else:
+        val = {"total": truth_value if rng.random() < rho else truth_value + rng.choice([-10, 10, 100])}
     n_in = sum(len(m["content"]) for m in messages) // 4
-    return {"text": json.dumps({"total": val}), "served_model": "mock",
+    return {"text": json.dumps(val), "served_model": "mock",
             "served_provider": "mock", "system_fingerprint": None,
             "prompt_tokens": n_in, "completion_tokens": 8, "provider_time": None,
             "cost": None, "wall_time": 0.0005 * n_in}
 
 
+def system_prompt(cfg) -> str:
+    return TOOLS_SYSTEM if cfg.get("task") == "tools" else PROMPTS[cfg.get("prompt", "answer-only")]
+
+
 def run_one(cfg, seed, keys, rng, sampler=None):
-    start, steps, truth = make_task(seed, cfg["lmax"], cfg["difficulty"])
-    system = PROMPTS[cfg.get("prompt", "answer-only")]
-    messages = [{"role": "system", "content": system},
-                {"role": "user", "content": f"New order. Current total: {start}. "
-                                            f"Reply with {{\"total\": {start}}} to confirm."},
-                {"role": "assistant", "content": json.dumps({"total": start})}]
+    tools = cfg.get("task") == "tools"
+    if tools:
+        intro, steps, truth = make_tools_task(seed, cfg["lmax"])
+        messages = [{"role": "system", "content": system_prompt(cfg)}]
+        turns = [(intro + "\nCustomer: " if j == 0 else "Tool result: ok\nCustomer: ") + t
+                 for j, t in enumerate(steps)]
+    else:
+        start, steps, truth = make_task(seed, cfg["lmax"], cfg["difficulty"])
+        messages = [{"role": "system", "content": system_prompt(cfg)},
+                    {"role": "user", "content": f"New order. Current total: {start}. "
+                                                f"Reply with {{\"total\": {start}}} to confirm."},
+                    {"role": "assistant", "content": json.dumps({"total": start})}]
+        turns = ["Tool result: " + json.dumps(step) for step in steps]
+    num_ctx = ((cfg.get("extra") or {}).get("options") or {}).get("num_ctx", 8192)
     records = []
-    for j, (step, true_total) in enumerate(zip(steps, truth), start=1):
-        messages.append({"role": "user", "content": "Tool result: " + json.dumps(step)})
+    for j, (turn, true_total) in enumerate(zip(turns, truth), start=1):
+        messages.append({"role": "user", "content": turn})
         if cfg["provider"] == "mock":
             res = call_mock(messages, true_total, cfg["mock_rho"], rng)
         elif cfg["provider"] == "ollama":
@@ -354,9 +489,18 @@ def run_one(cfg, seed, keys, rng, sampler=None):
         else:
             res = call_api(cfg["provider"], cfg["model"], messages, keys, cfg.get("provider_pin"),
                            cfg.get("max_tokens", 40), cfg.get("extra"))
-        got = parse_total(res["text"])
+        if tools:
+            got = parse_call(res["text"])
+            correct = call_correct(got, true_total)
+        else:
+            got = parse_total(res["text"])
+            correct = got == true_total
         messages.append({"role": "assistant", "content": res["text"] or ""})
-        records.append({"step": j, "true": true_total, "got": got, "correct": got == true_total,
+        # a prompt that fills the context window would be cut by the server
+        over = (cfg["provider"] == "ollama" and res.get("prompt_tokens") is not None
+                and res["prompt_tokens"] + cfg.get("max_tokens", 40) > num_ctx)
+        records.append({"step": j, "true": true_total, "got": got, "correct": correct,
+                        "context_full": over,
                         **{k: v for k, v in res.items() if k != "text"},
                         "raw": res["text"] or ""})
         if cfg.get("sleep"):
@@ -376,7 +520,8 @@ def run_model(cfg, out_dir: Path):
         env_meta.update(ollama_check_on_gpu(cfg["model"]))
         env_meta["idle_watts"] = sampler.idle_watts(5.0)
     out_dir.mkdir(parents=True, exist_ok=True)
-    tag = re.sub(r"[^A-Za-z0-9._-]", "_", f"{cfg['provider']}__{cfg['model']}__d{cfg['difficulty']}")
+    task = "tools" if cfg.get("task") == "tools" else f"d{cfg['difficulty']}"
+    tag = re.sub(r"[^A-Za-z0-9._-]", "_", f"{cfg['provider']}__{cfg['model']}__{task}")
     path = out_dir / f"{tag}.jsonl"
     done = {json.loads(l)["seed"] for l in path.open()} if path.exists() else set()
     rng = random.Random(42)
@@ -401,8 +546,9 @@ def run_model(cfg, out_dir: Path):
                 "provider_pin": cfg.get("provider_pin"), "difficulty": cfg["difficulty"],
                 "seed": seed, "lmax": cfg["lmax"], "temperature": 0,
                 "max_tokens": cfg.get("max_tokens", 40), "extra": cfg.get("extra"),
+                "task": cfg.get("task", "order-total"),
                 "prompt": cfg.get("prompt", "answer-only"),
-                "system_prompt": PROMPTS[cfg.get("prompt", "answer-only")],
+                "system_prompt": system_prompt(cfg),
                 "env": env_meta, "run_wall_time": run_t1 - run_t0,
                 "run_gpu_energy_j": run_energy,
                 "first_fail": first_fail, "steps": recs}) + "\n")
@@ -414,7 +560,7 @@ def run_model(cfg, out_dir: Path):
 
 DEFAULTS = {"runs": 15, "lmax": 50, "seed0": 1000, "difficulty": 1, "sleep": 0.0,
             "mock_rho": 0.97, "provider_pin": None, "max_tokens": 40, "extra": None,
-            "prompt": "answer-only"}
+            "prompt": "answer-only", "task": "order-total"}
 
 
 def main():
@@ -431,6 +577,7 @@ def main():
     ap.add_argument("--mock-rho", type=float)
     ap.add_argument("--max-tokens", type=int)
     ap.add_argument("--prompt", choices=sorted(PROMPTS))
+    ap.add_argument("--task", choices=["order-total", "tools"])
     ap.add_argument("--only", help="run only this model id from the config")
     ap.add_argument("--out", default=str(HERE / "results"))
     a = ap.parse_args()
@@ -446,7 +593,7 @@ def main():
     overrides = {k: v for k, v in {"runs": a.runs, "lmax": a.lmax, "seed0": a.seed0,
                                    "difficulty": a.difficulty, "sleep": a.sleep,
                                    "mock_rho": a.mock_rho, "provider_pin": a.provider_pin,
-                                   "max_tokens": a.max_tokens, "prompt": a.prompt}.items()
+                                   "max_tokens": a.max_tokens, "prompt": a.prompt, "task": a.task}.items()
                  if v is not None}
     if a.only:
         cfgs = [c for c in cfgs if c["model"] == a.only]

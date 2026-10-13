@@ -1,0 +1,32 @@
+{
+  "common": {
+    "provider": "ollama",
+    "task": "tools",
+    "runs": 15,
+    "lmax": 150,
+    "seed0": 1000,
+    "max_tokens": 60,
+    "extra": {
+      "options": {
+        "num_ctx": 16384
+      }
+    }
+  },
+  "models": [
+    {"model": "gemma3:1b"},
+    {"model": "llama3.2:1b"},
+    {"model": "qwen3:0.6b"},
+    {"model": "qwen3:1.7b"},
+    {"model": "llama3.2:3b"},
+    {"model": "ministral-3:3b"},
+    {"model": "gemma3:4b"},
+    {"model": "llama3.1:8b"},
+    {"model": "qwen3:8b"},
+    {"model": "ministral-3:8b"},
+    {"model": "glm4:9b"},
+    {"model": "gemma3:12b"},
+    {"model": "ministral-3:14b"},
+    {"model": "qwen3:14b"},
+    {"model": "qwen3.8-27b"}
+  ]
+}
