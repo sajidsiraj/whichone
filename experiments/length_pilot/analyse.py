@@ -235,25 +235,45 @@ def tables(summ, keys, pairs, out: Path, lmax):
     (out / "table_pilot_crossovers.tex").write_text("\n".join(lines) + "\n")
 
 
+MIN_SUCCESSES = 3  # observed points from fewer successful runs are drawn hollow
+
+
 def figure(summ, keys, path: Path, lmax):
+    """Energy per successful task against L: fitted lines and observed points,
+    one colour and marker per model (Okabe-Ito colours, readable in grey)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(5.5, 3.6))
+    colours = ["#000000", "#E69F00", "#56B4E9", "#009E73", "#CC79A7"]
+    markers = ["o", "s", "^", "D", "v"]
     styles = ["-", "--", "-.", ":", (0, (5, 1, 1, 1, 1, 1))]
+    fig, ax = plt.subplots(figsize=(5.8, 3.8))
     Ls = list(range(1, lmax + 1))
-    for k, ls in zip(sorted(keys, key=lambda k: summ[k]["per_step_mean"]["energy"]), styles):
+    for k, col, mk, ls in zip(sorted(keys, key=lambda k: summ[k]["per_step_mean"]["energy"]),
+                              colours, markers, styles):
         m = summ[k]
-        obs = [x / 1000 if not math.isinf(x) else float("nan") for x in m["per_success"]["energy"]]
         fit = [x / 1000 for x in m["per_success_fitted"]["energy"]]
-        line, = ax.plot(Ls, fit, linestyle=ls, color="black", linewidth=1, label=display_name(k))
-        ax.plot(Ls[4::5], obs[4::5], "o", markersize=2.5, color=line.get_color(), alpha=0.6)
+        ax.plot(Ls, fit, linestyle=ls, color=col, linewidth=1.2)
+        full, thin = [], []
+        for L in range(5, lmax + 1, 5):
+            x = m["per_success"]["energy"][L - 1]
+            if math.isinf(x):
+                continue
+            (full if m["S"][L - 1] * m["n_runs"] >= MIN_SUCCESSES - 1e-9 else thin).append((L, x / 1000))
+        if full:
+            ax.plot(*zip(*full), mk, color=col, markersize=3.5, linestyle="none")
+        if thin:
+            ax.plot(*zip(*thin), mk, markerfacecolor="none", markeredgecolor=col,
+                    markersize=3.5, linestyle="none")
+        ax.plot([], [], linestyle=ls, marker=mk, color=col, markersize=3.5,
+                label=display_name(k))
     ax.set_yscale("log")
     ax.set_ylim(0.01, 100)
+    ax.set_xlim(0, lmax + 2)
     ax.set_xlabel("Task length $L$ (steps)")
     ax.set_ylabel("GPU energy per successful task (kJ)")
-    ax.legend(frameon=False, fontsize=8, loc="upper left")
+    ax.legend(frameon=False, fontsize=8, loc="lower right")
     fig.tight_layout()
     fig.savefig(path)
 
