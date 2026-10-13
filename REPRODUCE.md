@@ -30,7 +30,7 @@ make reproduce
 make overleaf OVERLEAF="/path/to/paper/folder"
 ```
 
-`make overleaf` copies only the seven generated files (four tables, three figures) and touches nothing else in that folder.
+`make overleaf` copies only the twelve generated files (seven tables, five figures) and touches nothing else in that folder.
 
 ## Where each item comes from
 
@@ -44,11 +44,12 @@ make overleaf OVERLEAF="/path/to/paper/folder"
 | Illustrative example: three task profiles | `paper/reproduce.py` | `numbers.json` (`profiles`) |
 | Figure: parallel lines and trade-off band (models C and B, crossovers 16.5, 63.7, 76.9) | `paper/reproduce.py` | `paper/output/fig_parallel_lines.pdf`, `numbers.json` (`figure_crossovers_C_vs_B`) |
 | Section 6, pilot numbers in the text | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/summary.json` |
-| Section 6, table of per-model results | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/table_pilot.tex` |
+| Section 6, table of per-model results (order task, panel a) | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/table_pilot.tex` |
 | Section 6, table of energy crossovers (models shown in the figure) | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/table_pilot_crossovers.tex` |
 | Appendix, energy crossovers for every model that survives the per-step screen | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/table_pilot_crossovers_all.tex` |
 | Section 6, figure of energy per successful task | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/fig_pilot_energy.pdf` |
 | Section 6, figure of all models on energy per step and steps before an error | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/fig_pilot_models.pdf` |
+| Section 6, the same tables and figures for the tools task (panels b) | `experiments/length_pilot/analyse.py --task tools` | `experiments/length_pilot/output/*_tools.*`, `summary_tools.json` |
 
 `tests/test_horizon.py` asserts the Section 3 and 4 numbers, so the tests fail if the code and the paper disagree.
 

@@ -35,7 +35,12 @@ PAPER_FILES = paper/output/table_frontier_by_length.tex paper/output/fig_paralle
 	experiments/length_pilot/output/table_pilot_crossovers.tex \
 	experiments/length_pilot/output/table_pilot_crossovers_all.tex \
 	experiments/length_pilot/output/fig_pilot_energy.pdf \
-	experiments/length_pilot/output/fig_pilot_models.pdf
+	experiments/length_pilot/output/fig_pilot_models.pdf \
+	experiments/length_pilot/output/table_pilot_tools.tex \
+	experiments/length_pilot/output/table_pilot_crossovers_tools.tex \
+	experiments/length_pilot/output/table_pilot_crossovers_all_tools.tex \
+	experiments/length_pilot/output/fig_pilot_energy_tools.pdf \
+	experiments/length_pilot/output/fig_pilot_models_tools.pdf
 
 overleaf:
 	@test -n "$(OVERLEAF)" || { echo 'Set OVERLEAF="/path/to/paper/folder"'; exit 1; }

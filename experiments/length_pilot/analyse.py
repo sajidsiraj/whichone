@@ -149,7 +149,16 @@ def crossovers(A, B, k):
             "closed_form": crossover_length(A["rho_hat"], B["rho_hat"], xa, xb),
             "fitted": switch_length(A["per_success_fitted"][k], B["per_success_fitted"][k]),
             "observed": switch_length(A["per_success"][k], B["per_success"][k]),
-            "sign_changes": sign_changes(A["per_success"][k], B["per_success"][k])}
+            "sign_changes": sign_changes(A["per_success"][k], B["per_success"][k]),
+            "sign_changes_supported": sign_changes(*supported(A, B, k))}
+
+
+def supported(A, B, k):
+    """The two observed curves at the lengths where both rest on at least
+    MIN_SUCCESSES successful runs (the solid points of the figure)."""
+    ok = [L for L in range(len(A["S"]))
+          if min(A["S"][L] * A["n_runs"], B["S"][L] * B["n_runs"]) >= MIN_SUCCESSES - 1e-9]
+    return [A["per_success"][k][L] for L in ok], [B["per_success"][k][L] for L in ok]
 
 
 def sign_changes(ra, rb):
