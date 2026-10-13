@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: test paper pilot-analysis pilot-run reproduce lock
+.PHONY: test paper pilot-analysis pilot-run pilot-run-local reproduce lock
 
 test:
 	$(PY) -m pytest -q
@@ -15,6 +15,9 @@ pilot-analysis:
 
 pilot-run:
 	$(PY) experiments/length_pilot/run.py --config experiments/length_pilot/pilot.json
+
+pilot-run-local:
+	$(PY) experiments/length_pilot/run.py --config experiments/length_pilot/pilot_local.json
 
 reproduce: test paper pilot-analysis
 
