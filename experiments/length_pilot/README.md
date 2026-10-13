@@ -43,14 +43,14 @@ Keys are read from the environment or from the repository's `.env`, which is not
 
 ## Main pilot: setting
 
-The committed logs `results/ollama__*__d0.jsonl` were produced on 13 October 2026 by harness version 4: the five Qwen models with `pilot_local.json` (commit 079af42), and the ten other models with `pilot_mixed.json` (commit 1a2c2a4; `run.py` is the same in both commits). Both used:
+The committed logs `results/ollama__*__d0.jsonl` were produced on 13 October 2026 by harness version 4: the five Qwen models with `pilot_local.json` (commit 079af42), and the ten other models with `pilot_mixed.json` (commit 1a2c2a4; `run.py` is the same in both commits). The tools-task logs `results/ollama__*__tools.jsonl` were produced the same day with `pilot_tools.json` by harness version 5 (commit f52214b). All used:
 
 | Item | Value |
 |---|---|
 | GPU | NVIDIA GeForce RTX 5060 Ti (16 GB), driver 595.99.02 |
 | Server | Ollama 0.35.1, each model alone on the GPU and fully in GPU memory (checked before each model) |
 | Models (Ollama digest) | qwen3:0.6b 7df6b6e09427, qwen3:1.7b 8f68893c685c, qwen3:8b 500a1f067a9f, qwen3:14b bdbd181c33f2, qwen3.8-27b 99322ec1f845; gemma3:1b 97558784bdc9, gemma3:4b 68ceab7e468a, gemma3:12b b92b218582c5, llama3.2:1b baf6a787fdff, llama3.2:3b a80c4f17acd5, llama3.1:8b 46e0c10c039e, ministral-3:3b f04aa1c738f6, ministral-3:8b 1922accd5827, ministral-3:14b 4760c35aeb9d, glm4:9b 5b699761eca5 |
-| Task | difficulty 0 (the tool result gives `line_total`), prompt `line-total`, 150 steps, 15 runs per model (seeds 1000 to 1014), temperature 0, at most 60 output tokens, context 16384 |
+| Task | order task: difficulty 0 (the tool result gives `line_total`), prompt `line-total`; tools task as described above. Both 150 steps, 15 runs per model (seeds 1000 to 1014), temperature 0, at most 60 output tokens, context 16384 |
 | Energy | GPU board power from NVML, sampled at 20 Hz and integrated over each call. Covers the GPU board only, not CPU, memory or cooling. |
 | Time | server-reported time per call |
 
