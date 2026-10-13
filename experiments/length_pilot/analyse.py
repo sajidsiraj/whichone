@@ -34,6 +34,7 @@ import argparse
 import json
 import math
 import random
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -191,11 +192,23 @@ def ci(b):
     if not b or not b["ci95"]:
         return "--"
     lo, hi = b["ci95"]
-    return f"{lo}--{hi}" + (f" ({b['share_none']:.0%} none)" if b["share_none"] > 0.025 else "")
+    return f"{lo}--{hi}" + (f" ({b['share_none'] * 100:.0f}\\% none)" if b["share_none"] > 0.025 else "")
+
+
+def display_name(key):
+    """Model name as printed in the paper: qwen3:1.7b -> Qwen3 1.7B."""
+    model = key.split("__")[0]
+    m = re.fullmatch(r"([a-z]+[0-9.]*)[:-]([0-9.]+b)", model)
+    if not m:  # other names are printed as logged
+        return model.replace("_", r"\_")
+    return f"{m.group(1).capitalize()} {m.group(2).upper()}"
 
 
 def tables(summ, keys, pairs, out: Path, lmax):
-    name = lambda k: k.split("__")[0].replace("_", r"\_")
+    """Tables are written without float or caption, so the paper can
+    \\input them inside its own table environment."""
+    name = display_name
+    size = lambda k: summ[k]["per_step_mean"]["energy"]
     lines = [r"\begin{tabular}{lrrrrrrr}", r"\toprule",
              r"Model & $\hat\rho$ & 95\% CI & J/step & s/step & \multicolumn{3}{c}{kJ per successful task} \\",
              r" & & & & & $L=10$ & $L=20$ & $L=50$ \\", r"\midrule"]
@@ -210,9 +223,9 @@ def tables(summ, keys, pairs, out: Path, lmax):
     (out / "table_pilot.tex").write_text("\n".join(lines) + "\n")
 
     lines = [r"\begin{tabular}{llrrrrc}", r"\toprule",
-             r"Smaller model & Larger model & Energy ratio & \multicolumn{4}{c}{Energy crossover $L^\ast$} \\",
+             r"Smaller model & Larger model & Energy ratio & \multicolumn{4}{c}{Energy crossover $L^\ast$ (steps)} \\",
              r" & & per step & closed form & fitted & observed & observed 95\% CI \\", r"\midrule"]
-    for p in pairs:
+    for p in sorted(pairs, key=lambda p: (size(p["a"]), size(p["b"]))):
         c = p["resources"].get("energy")
         if not c or p["status"] != "crossover":
             continue
@@ -234,7 +247,7 @@ def figure(summ, keys, path: Path, lmax):
         m = summ[k]
         obs = [x / 1000 if not math.isinf(x) else float("nan") for x in m["per_success"]["energy"]]
         fit = [x / 1000 for x in m["per_success_fitted"]["energy"]]
-        line, = ax.plot(Ls, fit, linestyle=ls, color="black", linewidth=1, label=k.split("__")[0])
+        line, = ax.plot(Ls, fit, linestyle=ls, color="black", linewidth=1, label=display_name(k))
         ax.plot(Ls[4::5], obs[4::5], "o", markersize=2.5, color=line.get_color(), alpha=0.6)
     ax.set_yscale("log")
     ax.set_ylim(0.01, 100)

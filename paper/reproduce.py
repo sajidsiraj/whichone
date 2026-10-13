@@ -6,7 +6,7 @@ Usage: python paper/reproduce.py [--out paper/output]
 Outputs:
   numbers.json                   every number quoted in the text
   table_frontier_by_length.tex   Table "Efficient models per successful task, by task length"
-  fig_parallel_lines.pdf         per-success log-ratio lines of the worked pair (vector)
+  fig_parallel_lines.pdf         per-success log-ratio lines of models C and B (vector)
 
 The same numbers are asserted in tests/test_horizon.py, so `pytest` fails if
 the code and the paper disagree.
@@ -33,7 +33,7 @@ MODELS = [
     StepProfile("E", 0.985, 0.320, 1.80, 3.6),
     StepProfile("F", 0.930, 0.030, 0.10, 0.9),
 ]
-# Worked pair: per step, a uses 10% energy, 20% cost, 40% time of b.
+# Motivation pair (Section 3): per step, a uses 10% energy, 20% cost, 40% time of b.
 PAIR = {"rho_a": 0.95, "rho_b": 0.99, "ratio": {"energy": 0.1, "cost": 0.2, "time": 0.4}}
 
 
@@ -82,26 +82,34 @@ def frontier_table(rows) -> str:
 
 
 def figure(path: Path):
+    """Parallel log-ratio lines for models C (smaller) against B (larger) of
+    the example: ln(R_C / R_B) per successful task for each resource. Each
+    line crosses zero at that resource's crossover; the band between the first
+    and last crossing is shaded."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    ra, rb = PAIR["rho_a"], PAIR["rho_b"]
-    Ls = list(range(0, 81))
+    by = {m.id: m for m in MODELS}
+    a, b = by["C"], by["B"]
+    Ls = list(range(0, 101))
     fig, ax = plt.subplots(figsize=(5.5, 3.4))
-    styles = {"time": "-", "cost": "--", "energy": ":"}
+    styles = {"time": "-", "energy": ":", "cost": "--"}
     cross = {}
-    for k, r in PAIR["ratio"].items():
-        ax.plot(Ls, [math.log(r) + L * math.log(rb / ra) for L in Ls], styles[k], color="black", label=k)
-        cross[k] = crossover_length(ra, rb, r, 1.0)
-    lo, hi = min(cross.values()), max(cross.values())
-    ax.axvspan(lo, hi, color="0.9")
+    for k, ls in styles.items():
+        r = a.resource(k) / b.resource(k)
+        ax.plot(Ls, [math.log(r) + L * math.log(b.reliability / a.reliability) for L in Ls],
+                linestyle=ls, color="black", label=k)
+        cross[k] = crossover_length(a.reliability, b.reliability, a.resource(k), b.resource(k))
+    ax.axvspan(min(cross.values()), max(cross.values()), color="0.9")
     ax.axhline(0, color="0.5", linewidth=0.8)
+    ax.set_xlim(0, 100)
     ax.set_xlabel("Task length $L$ (steps)")
-    ax.set_ylabel(r"$\ln\,(R_a / R_b)$ per successful task")
+    ax.set_ylabel(r"$\ln\,(R_C / R_B)$ per successful task")
     ax.legend(frameon=False, loc="upper left")
     fig.tight_layout()
     fig.savefig(path)
+    return cross
 
 
 def main():
@@ -111,9 +119,9 @@ def main():
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     n = numbers()
-    (out / "numbers.json").write_text(json.dumps(n, indent=1))
     (out / "table_frontier_by_length.tex").write_text(frontier_table(n["frontier_by_length"]))
-    figure(out / "fig_parallel_lines.pdf")
+    n["figure_crossovers_C_vs_B"] = figure(out / "fig_parallel_lines.pdf")
+    (out / "numbers.json").write_text(json.dumps(n, indent=1))
     print(f"wrote numbers.json, table_frontier_by_length.tex, fig_parallel_lines.pdf to {out}")
 
 

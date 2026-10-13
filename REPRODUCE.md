@@ -23,6 +23,15 @@ make reproduce
 
 This runs the tests, regenerates the Section 3 and 4 numbers, table and figure, and recomputes the pilot results from the committed logs. It needs no API keys and no network access.
 
+The paper reads its generated tables with `\input` and its figures with `\includegraphics`, from the folder that holds `main.tex`. To update them after a new run:
+
+```bash
+make reproduce
+make overleaf OVERLEAF="/path/to/paper/folder"
+```
+
+`make overleaf` copies only the five generated files (three tables, two figures) and touches nothing else in that folder.
+
 ## Where each item comes from
 
 | Paper item | Produced by | Output |
@@ -33,8 +42,11 @@ This runs the tests, regenerates the Section 3 and 4 numbers, table and figure, 
 | Illustrative example: models D and E pruned | `paper/reproduce.py` | `numbers.json` (`stage1`) |
 | Table: efficient models by task length | `paper/reproduce.py` | `paper/output/table_frontier_by_length.tex` |
 | Illustrative example: three task profiles | `paper/reproduce.py` | `numbers.json` (`profiles`) |
-| Figure: parallel lines and trade-off band | `paper/reproduce.py` | `paper/output/fig_parallel_lines.pdf` |
-| Section 6, pilot results | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/summary.json` |
+| Figure: parallel lines and trade-off band (models C and B, crossovers 16.5, 63.7, 76.9) | `paper/reproduce.py` | `paper/output/fig_parallel_lines.pdf`, `numbers.json` (`figure_crossovers_C_vs_B`) |
+| Section 6, pilot numbers in the text | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/summary.json` |
+| Section 6, table of per-model results | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/table_pilot.tex` |
+| Section 6, table of energy crossovers | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/table_pilot_crossovers.tex` |
+| Section 6, figure of energy per successful task | `experiments/length_pilot/analyse.py` | `experiments/length_pilot/output/fig_pilot_energy.pdf` |
 
 `tests/test_horizon.py` asserts the Section 3 and 4 numbers, so the tests fail if the code and the paper disagree.
 
