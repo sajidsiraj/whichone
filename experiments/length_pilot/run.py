@@ -37,7 +37,7 @@ import requests
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-HARNESS_VERSION = "3"
+HARNESS_VERSION = "4"
 
 ENDPOINTS = {
     "groq": "https://api.groq.com/openai/v1/chat/completions",
@@ -266,6 +266,35 @@ def ollama_meta(model: str) -> dict:
     return meta
 
 
+def ollama_loaded() -> list[dict]:
+    return requests.get("http://127.0.0.1:11434/api/ps", timeout=10).json().get("models", [])
+
+
+def ollama_unload_all():
+    """Unload every resident model so the next one has the GPU to itself."""
+    for m in ollama_loaded():
+        requests.post("http://127.0.0.1:11434/api/generate",
+                      json={"model": m["name"], "keep_alive": 0}, timeout=60)
+    for _ in range(30):
+        if not ollama_loaded():
+            return
+        time.sleep(1)
+    raise RuntimeError("could not unload resident models")
+
+
+def ollama_check_on_gpu(model: str) -> dict:
+    """Refuse to measure a model that is not fully in GPU memory: part of
+    it would run on the CPU, whose energy is not measured."""
+    for m in ollama_loaded():
+        if model in (m.get("name"), m.get("model")) or f"{model}:latest" == m.get("name"):
+            if m.get("size_vram", 0) < m.get("size", 1):
+                raise RuntimeError(f"{model} is not fully on the GPU "
+                                   f"({m.get('size_vram')} of {m.get('size')} bytes)")
+            return {"size_loaded": m.get("size"), "size_vram": m.get("size_vram"),
+                    "context_length": m.get("context_length")}
+    raise RuntimeError(f"{model} is not loaded")
+
+
 def call_ollama(model, messages, max_tokens, extra, sampler):
     body = {"model": model, "messages": messages, "stream": False, "think": False,
             "keep_alive": "30m",
@@ -339,10 +368,12 @@ def run_model(cfg, out_dir: Path):
     keys = None if cfg["provider"] in ("mock", "ollama") else load_keys(cfg["provider"])
     sampler, env_meta = None, {}
     if cfg["provider"] == "ollama":
+        ollama_unload_all()
         sampler = PowerSampler()
         env_meta = {**gpu_info(), **ollama_meta(cfg["model"])}
         # Warm-up call so that model loading is not charged to the first run.
         call_ollama(cfg["model"], [{"role": "user", "content": "Reply with OK."}], 5, cfg.get("extra"), None)
+        env_meta.update(ollama_check_on_gpu(cfg["model"]))
         env_meta["idle_watts"] = sampler.idle_watts(5.0)
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = re.sub(r"[^A-Za-z0-9._-]", "_", f"{cfg['provider']}__{cfg['model']}__d{cfg['difficulty']}")
@@ -377,6 +408,8 @@ def run_model(cfg, out_dir: Path):
                 "first_fail": first_fail, "steps": recs}) + "\n")
             f.flush()
             print(f"{cfg['model']} seed {seed}: first failure at step {first_fail}", flush=True)
+    if cfg["provider"] == "ollama":
+        ollama_unload_all()
 
 
 DEFAULTS = {"runs": 15, "lmax": 50, "seed0": 1000, "difficulty": 1, "sleep": 0.0,
