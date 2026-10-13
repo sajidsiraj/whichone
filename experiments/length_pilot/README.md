@@ -2,9 +2,15 @@
 
 Tests hypothesis H1 of the paper: task success falls with task length in a way that gives one crossover per resource between two models.
 
-## Task
+## Tasks
 
-Each run is one multi-turn agent task with an exact number of steps (`lmax`). At each step the model receives a tool result, an order line to add or remove, and must reply with the new order total as JSON. The full history is kept, so errors carry forward. Runs are never stopped early, so the cost and time of every step are recorded. Success at length L means the first L totals are all correct, so one run gives success at every length from 1 to `lmax`. Tasks come from fixed seeds, so every model sees the same tasks. Temperature is 0.
+There are two task families, so that per-step reliability and the crossovers can be compared across kinds of work.
+
+**Order task** (`task: order-total`, the default). At each step the model receives a tool result, an order line to add or remove, and must reply with the new order total as JSON.
+
+**Tools task** (`task: tools`). A customer-service conversation. The account starts with five orders, each with a few items and a delivery city. At each step the customer asks for one change, and the model must reply with the one correct tool call (`set_address`, `add_item`, `remove_item` or `refund_item`) as JSON. About half the requests refer back to earlier ones ("that same order", "the same city as order F4", "refund every vase", which needs the current quantity), and tool results only say "ok", so the model has to track the account itself. A step is correct when the tool and every argument match the generated answer; case, code fences and extra keys are ignored.
+
+In both tasks the full history is kept, so errors carry forward. Runs are never stopped early, so the cost and time of every step are recorded. Success at length L means the first L steps are all correct, so one run gives success at every length from 1 to `lmax`. Tasks come from fixed seeds, so every model sees the same tasks. Temperature is 0.
 
 ## Files
 
@@ -13,6 +19,7 @@ Each run is one multi-turn agent task with an exact number of steps (`lmax`). At
 | `run.py` | Runs the models and writes raw logs to `results/` (needs API keys) |
 | `pilot_local.json` | The model list and settings of the main pilot in the paper (local GPU): five Qwen models |
 | `pilot_mixed.json` | The second part of the main pilot: ten models from four other developers, same settings |
+| `pilot_tools.json` | The tools task for all fifteen models, same settings |
 | `pilot.json` | Settings for a hosted-API run (Groq), not used for the paper results so far |
 | `results/*.jsonl` | Raw logs, one line per run, with model, provider, date, git commit and every step. Under version control. |
 | `analyse.py` | Computes every pilot number, table and figure in the paper from `results/` (no keys or GPU needed) |
@@ -25,7 +32,7 @@ Each run is one multi-turn agent task with an exact number of steps (`lmax`). At
 From the repository root:
 
 ```bash
-make pilot-analysis   # recompute all pilot numbers from the committed logs
+make pilot-analysis   # recompute all pilot numbers from the committed logs (both tasks)
 make pilot-run-local  # re-run the main pilot on a local GPU through Ollama (both configurations)
 make pilot-run        # hosted-API run (needs GROQ_API_KEY or OPENROUTER_API_KEY)
 ```

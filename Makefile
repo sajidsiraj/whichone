@@ -12,6 +12,9 @@ pilot-analysis:
 	@if ls experiments/length_pilot/results/*.jsonl >/dev/null 2>&1; then \
 		$(PY) experiments/length_pilot/analyse.py; \
 	else echo "No pilot logs yet in experiments/length_pilot/results/"; fi
+	@if ls experiments/length_pilot/results/*__tools.jsonl >/dev/null 2>&1; then \
+		$(PY) experiments/length_pilot/analyse.py --task tools; \
+	else echo "No tools-task logs yet"; fi
 
 pilot-run:
 	$(PY) experiments/length_pilot/run.py --config experiments/length_pilot/pilot.json
@@ -19,6 +22,7 @@ pilot-run:
 pilot-run-local:
 	$(PY) experiments/length_pilot/run.py --config experiments/length_pilot/pilot_local.json
 	$(PY) experiments/length_pilot/run.py --config experiments/length_pilot/pilot_mixed.json
+	$(PY) experiments/length_pilot/run.py --config experiments/length_pilot/pilot_tools.json
 
 reproduce: test paper pilot-analysis
 

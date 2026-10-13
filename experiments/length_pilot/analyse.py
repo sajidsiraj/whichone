@@ -5,7 +5,10 @@ Every pilot number in the paper is produced by this script from the raw logs in
 results/, so the analysis can be repeated exactly without calling any API.
 
 Usage:
-  python experiments/length_pilot/analyse.py [--results DIR] [--out DIR] [--boot 1000]
+  python experiments/length_pilot/analyse.py [--task d0|tools] [--results DIR] [--out DIR] [--boot 1000]
+
+Each task family is analysed on its own. The order task (d0) writes the file
+names below; any other task adds its name, e.g. table_pilot_tools.tex.
 
 Inputs (all under version control):
   results/*.jsonl  raw run logs written by run.py
@@ -52,7 +55,8 @@ def load(results: Path):
     for p in sorted(results.glob("*.jsonl")):
         for line in p.open():
             r = json.loads(line)
-            runs[f"{r['model']}__d{r.get('difficulty', 1)}"].append(r)
+            task = "tools" if r.get("task") == "tools" else f"d{r.get('difficulty', 1)}"
+            runs[f"{r['model']}__{task}"].append(r)
     return runs
 
 
@@ -114,7 +118,7 @@ def summarise(rs, lmax, prices, energy, model):
             "max_abs_S_minus_fit": max(abs(a - b) for a, b in zip(S, fit)),
             "per_step_mean": {k: sum(v) / len(v) for k, v in steps.items()},
             "per_step_by_band": {k: {f"{a + 1}-{b}": sum(v[a:b]) / len(v[a:b])
-                                     for a, b in ((0, 10), (10, 50), (50, 100), (100, lmax)) if b <= lmax}
+                                     for a, b in ((0, 10), (10, 50), (50, 100), (100, lmax)) if a < b <= lmax}
                                  for k, v in steps.items()},
             "cumulative": {k: cumulative(v) for k, v in steps.items()},
             "per_success": {k: per_success_curve(v, S) for k, v in steps.items()},
@@ -253,30 +257,32 @@ def crossover_table(pairs, name, size, path: Path):
     path.write_text("\n".join(lines) + "\n")
 
 
-def tables(summ, keys, pairs, out: Path, lmax, shown, dominated):
+def tables(summ, keys, pairs, out: Path, lmax, shown, dominated, sfx=""):
     """Tables are written without float or caption, so the paper can
     \\input them inside its own table environment."""
     name = display_name
     size = lambda k: summ[k]["per_step_mean"]["energy"]
-    lines = [r"\begin{tabular}{lrrrrrrr}", r"\toprule",
-             r"Model & $\hat\rho$ & 95\% CI & J/step & s/step & \multicolumn{3}{c}{kJ per successful task} \\",
-             r" & & & & & $L=10$ & $L=20$ & $L=50$ \\", r"\midrule"]
+    Ls = [L for L in (10, 20, 50) if L <= lmax]
+    lines = [r"\begin{tabular}{lrrrr" + "r" * len(Ls) + "}", r"\toprule",
+             r"Model & $\hat\rho$ & 95\% CI & J/step & s/step & \multicolumn{" + str(len(Ls))
+             + r"}{c}{kJ per successful task} \\",
+             r" & & & & & " + " & ".join(f"$L={L}$" for L in Ls) + r" \\", r"\midrule"]
     for k in sorted(keys, key=lambda k: summ[k]["per_step_mean"]["energy"]):
         m = summ[k]
         lo, hi = m["rho_ci95"]
-        e = [m["per_success"]["energy"][L - 1] / 1000 for L in (10, 20, 50)]
+        e = [m["per_success"]["energy"][L - 1] / 1000 for L in Ls]
         mark = r"$^\dagger$" if k in dominated else ""
         lines.append(f"{name(k)}{mark} & {m['rho_hat']:.4f} & {lo:.4f}--{hi:.4f} & "
                      f"{m['per_step_mean']['energy']:.0f} & {m['per_step_mean']['time']:.2f} & "
                      + " & ".join(r"$\infty$" if math.isinf(x) else f"{x:.1f}" for x in e) + r" \\")
     lines += [r"\bottomrule", r"\end{tabular}"]
-    (out / "table_pilot.tex").write_text("\n".join(lines) + "\n")
+    (out / f"table_pilot{sfx}.tex").write_text("\n".join(lines) + "\n")
 
     crossover_table([p for p in pairs if p["a"] in shown and p["b"] in shown], name, size,
-                    out / "table_pilot_crossovers.tex")
+                    out / f"table_pilot_crossovers{sfx}.tex")
     # every pair of models that survive the per-step screen, for the appendix
     crossover_table([p for p in pairs if p["a"] not in dominated and p["b"] not in dominated],
-                    name, size, out / "table_pilot_crossovers_all.tex")
+                    name, size, out / f"table_pilot_crossovers_all{sfx}.tex")
 
 
 MIN_SUCCESSES = 3  # observed points from fewer successful runs are drawn hollow
@@ -373,12 +379,15 @@ def main():
     ap.add_argument("--boot", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--no-figure", action="store_true")
+    ap.add_argument("--task", default="d0",
+                    help="task family to analyse: d0, d1, d2 (order task at that difficulty) or tools")
     a = ap.parse_args()
     prices = json.loads((HERE / "prices.json").read_text()) if (HERE / "prices.json").exists() else {}
     energy = json.loads((HERE / "energy.json").read_text()) if (HERE / "energy.json").exists() else {}
-    runs = load(Path(a.results))
+    runs = {k: v for k, v in load(Path(a.results)).items() if k.endswith(f"__{a.task}")}
     if not runs:
-        raise SystemExit(f"No run logs in {a.results}")
+        raise SystemExit(f"No run logs for task {a.task} in {a.results}")
+    sfx = "" if a.task == "d0" else f"_{a.task}"
     lmax = min(r["lmax"] for rs in runs.values() for r in rs)
     rng = random.Random(a.seed)
 
@@ -432,16 +441,16 @@ def main():
     for k in slim:
         slim[k]["S"] = summ[k]["S"]
         slim[k]["energy_per_success"] = summ[k]["per_success"]["energy"]
-    (out / "summary.json").write_text(json.dumps(
+    (out / f"summary{sfx}.json").write_text(json.dumps(
         {"lmax": lmax, "bootstrap": a.boot, "seed": a.seed, "order": keys, "models": slim,
          "dominated_per_step": dominated, "shown": shown, "pairs": pairs},
         indent=1))
-    tables(summ, keys, pairs, out, lmax, shown, dominated)
+    tables(summ, keys, pairs, out, lmax, shown, dominated, sfx)
     if not a.no_figure:
-        figure(summ, shown, out / "fig_pilot_energy.pdf", lmax)
-        scatter(summ, keys, dominated, out / "fig_pilot_models.pdf")
-    print(f"wrote summary.json, table_pilot.tex, table_pilot_crossovers.tex, "
-          f"table_pilot_crossovers_all.tex, fig_pilot_energy.pdf, fig_pilot_models.pdf to {out}")
+        figure(summ, shown, out / f"fig_pilot_energy{sfx}.pdf", lmax)
+        scatter(summ, keys, dominated, out / f"fig_pilot_models{sfx}.pdf")
+    print(f"wrote summary{sfx}.json, table_pilot{sfx}.tex, table_pilot_crossovers{sfx}.tex, "
+          f"table_pilot_crossovers_all{sfx}.tex, fig_pilot_energy{sfx}.pdf, fig_pilot_models{sfx}.pdf to {out}")
 
 
 if __name__ == "__main__":
