@@ -2,7 +2,7 @@
 /v2 rather than mutating this router."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from ..core.types import Constraints, Recommendation, TaskProfile
@@ -54,35 +54,71 @@ def list_models(request: Request, snapshot: str | None = None,
                 for m in snap.models])
 
 
+MAX_INTERVAL_LENGTH = 1000
+
+
+def redact(rec: Recommendation) -> Recommendation:
+    """Free callers get the decision and its reasons (efficient set, stages,
+    ranking scores) but not resources per successful task or attempt success:
+    from those at two task lengths the measured per-step values could be
+    recovered, and those are a Pro-tier benefit."""
+    return rec.model_copy(update={
+        "per_success": {}, "attempt_success": {},
+        "ranking": [r.model_copy(update={"normalised": {}}) for r in rec.ranking]})
+
+
 @router.get("/frontier")
 def get_frontier(request: Request, snapshot: str | None = None,
+                 length: int = Query(1, ge=1),
+                 max_attempts: int | None = Query(None, ge=1),
+                 completion_probability: float | None = Query(None, gt=0, le=1),
                  min_context: float | None = None,
-                 max_cost: float | None = None,
-                 max_latency: float | None = None):
-    """The Pareto-efficient frontier, optionally under hard constraints.
+                 pro: ApiKeyRecord | None = Depends(optional_pro_key)):
+    """The efficient set for a task of `length` steps, per successful task.
 
     Preference-free: no weights are involved, so this answer is the same for
-    every caller sharing the constraints, and is served from cache.
+    every caller with the same task, and is served from cache.
     """
-    constraints = Constraints(min_context=min_context, max_cost=max_cost,
-                              max_latency=max_latency)
+    constraints = Constraints(min_context=min_context)
     try:
-        return _service(request).frontier(constraints, snapshot)
+        body = _service(request).frontier(constraints, length, completion_probability,
+                                          max_attempts, snapshot)
+        return body if pro is not None else {**body, "per_success": None}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.get("/frontier/intervals")
+def get_frontier_intervals(request: Request, snapshot: str | None = None,
+                           max_length: int = Query(100, ge=1, le=MAX_INTERVAL_LENGTH),
+                           max_attempts: int | None = Query(None, ge=1),
+                           completion_probability: float | None = Query(None, gt=0, le=1),
+                           min_context: float | None = None):
+    """Efficient sets for every task length from 1 to `max_length`, as
+    intervals of length over which the set stays the same."""
+    constraints = Constraints(min_context=min_context)
+    try:
+        return _service(request).intervals(constraints, max_length, completion_probability,
+                                           max_attempts, snapshot)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.post("/recommend", response_model=Recommendation)
 def post_recommend(request: Request, profile: TaskProfile,
-                   snapshot: str | None = None):
-    """Full pipeline: feasibility, efficiency, veto, ranking.
+                   snapshot: str | None = None,
+                   pro: ApiKeyRecord | None = Depends(optional_pro_key)):
+    """Full pipeline for one task profile: constraints, per-step screen,
+    efficient set at the task length, and Stage 2 only if it is needed.
 
-    The response is the audit record: ranking with normalised values, the
-    frontier, the weight vector actually used, per-stage exclusions, and the
-    snapshot version, so any recommendation can be reproduced exactly.
+    The response is the audit record: the efficient set with resources per
+    successful task, the ranking and weights if Stage 2 ran, per-stage
+    exclusions, and the snapshot version, so any recommendation can be
+    reproduced exactly.
     """
     try:
-        return _service(request).recommend(profile, snapshot)
+        rec = _service(request).recommend(profile, snapshot)
+        return rec if pro is not None else redact(rec)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
@@ -91,8 +127,9 @@ def post_recommend(request: Request, profile: TaskProfile,
 
 @router.post("/profile")
 def post_profile():
-    """v1.1: free-text task description to criterion intensities via a
-    pluggable LLM backend (the paper's automated channel)."""
+    """v1.1: free-text task description to a task profile (length, retry
+    limit, required completion, sensitivities) via a pluggable LLM backend
+    (the paper's automated way)."""
     raise HTTPException(status_code=501,
                         detail="automated task profiling ships in v1.1; "
-                               "supply intensities or weights to /v1/recommend")
+                               "supply the task profile to /v1/recommend")

@@ -9,26 +9,33 @@ Every computed number, table and figure in the paper can be regenerated with
 
 ## The idea
 
-Model selection is a multi-criteria decision problem, not a benchmark
-lookup. The pipeline separates efficiency from preference:
+An agent completes a task only if every step succeeds, and failed attempts
+still use energy, cost and time. So models are compared per successfully
+completed task, not per call. With per-step reliability rho and resource r
+per step, a task of L steps uses on average `r L / rho^L` of that resource per
+success. A smaller model is better for short tasks; past a crossover length,
+one per resource, a more reliable model uses less of everything.
 
-1. **Feasibility screen** (Stage 0): hard constraints (context floor,
-   governance class, cost/latency ceilings) remove infeasible models.
-2. **Efficiency screen** (Stage 1, MODM): preference-free non-dominated
-   sorting over measurable objectives (capability, tool-calling
-   reliability, cost, latency, context, safety) yields the Pareto
-   frontier. No weight or normalisation choice can change it, and it is
-   cached marketplace-wide.
-3. **Preference ranking** (Stage 2, MADM): only the frontier is ranked
-   under task-specific weights (explicit, AHP-derived, or mapped from
-   criterion intensities), aggregated by SAW with a TOPSIS cross-check,
-   subject to non-compensatory aspiration levels (veto) so that, for
-   example, an unreliable tool-caller can never top a high-risk
-   recommendation regardless of weights.
+The pipeline (paper, Section 4) separates questions of fact from questions
+of value:
 
-Every response is an audit record: ranking, frontier, weight vector,
-per-stage exclusions, and the catalogue snapshot version, so any
-recommendation can be reproduced exactly.
+0. **Feasibility** (Stage 0): hard constraints (context, safety, deployment
+   class, providers, ceilings per task) remove infeasible models.
+1. **Per-step screen** (Stage 1): a model worse on every per-step quantity
+   (reliability, energy, cost, time) is dominated at every task length and is
+   removed once.
+2. **Efficient set at the task length**: resources per successful task for
+   the task's length L; the chance constraint that the task is completed with
+   probability at least beta within K attempts; the Pareto-efficient set.
+   Often one model is left, and no preferences are needed.
+3. **Preference** (Stage 2): only if several models are efficient, weights
+   over energy, cost and time (explicit, AHP-derived, or mapped from
+   sensitivities) rank them by SAW, with TOPSIS as a check. Without weights
+   the API returns the efficient set and says that a preference is needed.
+
+Every response is an audit record: the efficient set, the per-stage
+exclusions, the weights if Stage 2 ran, and the catalogue snapshot version, so
+any recommendation can be reproduced exactly.
 
 ## Layout
 
@@ -37,7 +44,7 @@ whichone/core        pure decision engine (pydantic + numpy, no web deps)
 whichone/core/horizon.py  resources per successful task, crossovers, efficient sets by task length
 whichone/catalogue   versioned marketplace snapshots (JSON repository)
 whichone/api         FastAPI service, /v1, OpenAPI docs at /docs
-tests/               includes golden tests reproducing the paper's tables
+tests/               includes golden tests reproducing the paper's example (Section 4)
 paper/               reproduce.py regenerates the paper's numbers, tables and figures
 experiments/         controlled-length pilot: run.py (live models), analyse.py (from logs)
 ```
@@ -54,20 +61,28 @@ uvicorn whichone.api.main:app --reload
 Then:
 
 ```bash
-# The catalogue and the preference-free frontier
+# The catalogue: the six illustrative models of the paper's example
 curl localhost:8000/v1/models
-curl "localhost:8000/v1/frontier?max_cost=10"
 
-# A recommendation for a high-volume triage agent
+# Efficient models for a 40-step task (no preferences involved)
+curl "localhost:8000/v1/frontier?length=40"
+
+# The same task when it may be tried at most twice and must succeed with
+# probability 0.95 (an irreversible payment step)
+curl "localhost:8000/v1/frontier?length=40&max_attempts=2&completion_probability=0.95"
+
+# Efficient sets for every task length up to 250, as intervals
+curl "localhost:8000/v1/frontier/intervals?max_length=250"
+
+# A recommendation for a 40-step task by a deployment that cares mostly about carbon
 curl -X POST localhost:8000/v1/recommend \
   -H "Content-Type: application/json" \
-  -d '{
-        "weights": {"capability": 0.10, "tool_reliability": 0.20,
-                    "cost": 0.30, "latency": 0.25,
-                    "context": 0.05, "safety": 0.10},
-        "veto": {"tool_reliability": 0.85}
-      }'
+  -d '{"length": 40, "weights": {"energy": 0.6, "cost": 0.2, "time": 0.2}}'
 ```
+
+Free callers see the decision and its reasons. Measured values, and the
+resources per successful task derived from them, are returned only to Pro
+callers.
 
 Interactive docs: `http://localhost:8000/docs`.
 
@@ -81,18 +96,26 @@ comma-separated list of keys and every request must carry a matching
 
 * **New MCDA method**: implement `fn(normalised, weights) -> scores` and
   decorate with `@register_method("name")` in `whichone/core/madm.py`.
-* **New objective**: add it to a snapshot's `objectives` list; the engine
-  is objective-set agnostic.
+* **New resource**: add it to a snapshot's `objectives` list with direction
+  `min` (for example water per step); the engine works over whatever
+  resources a snapshot declares, besides `reliability`.
 * **New storage backend**: implement the `CatalogueRepository` protocol
   (e.g. Postgres) and pass it to `create_app(repository=...)`.
-* **Custom criteria loading matrix**: pass `loading=` to
+* **Custom sensitivity mapping**: pass `loading=` to
   `intensities_to_weights`; treat your copy as a versioned governance
   artefact.
 
 ## Roadmap
 
-* v1.1: `/v1/profile`, free-text task description to criterion
-  intensities via a pluggable LLM backend (currently 501).
-* Live measurement layer: scheduled probes for price, latency and
-  benchmark ingestion producing dated snapshots.
+* v1.1: `/v1/profile`, free-text task description to a task profile
+  (length, retry limit, required completion, sensitivities) via a
+  pluggable LLM backend (currently 501).
+* Live measurement layer: per-step reliability, energy, cost and time per
+  task family, from runs of the pilot harness, producing dated snapshots.
+* Measured success curves in place of rho^L (paper, Section 4, relaxations).
 * Web front-end on the same API.
+
+## Upgrading a Pro database
+
+Databases created from an earlier `schema.sql` need the files in
+`migrations/`, applied once in date order.

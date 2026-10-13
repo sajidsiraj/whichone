@@ -1,9 +1,9 @@
-"""Weight elicitation: AHP for the deliberative channel, and the loading
-matrix that converts task-criterion intensities to objective weights.
+"""Weight elicitation for Stage 2: AHP for the deliberative channel, and the
+loading matrix that converts task-criterion intensities to resource weights.
 
 The loading matrix is a governance artefact, not code: organisations override
 it with their own versioned copy (see catalogue snapshots / API config). The
-default encodes the loading structure stated in the paper.
+default maps each sensitivity onto one resource.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ _RI = {1: 0.0, 2: 0.0, 3: 0.58, 4: 0.90, 5: 1.12, 6: 1.24, 7: 1.32,
 def ahp_weights(pairwise: np.ndarray) -> tuple[np.ndarray, float]:
     """Weights from a positive reciprocal pairwise-comparison matrix.
 
-    Uses the normalised geometric mean of rows (the paper's eq. 5-6) and
+    Uses the normalised geometric mean of rows (Saaty's geometric-mean method) and
     returns (weights, consistency_ratio). Callers should reject CR >= 0.10.
     """
     a = np.asarray(pairwise, dtype=float)
@@ -37,18 +37,13 @@ def ahp_weights(pairwise: np.ndarray) -> tuple[np.ndarray, float]:
     return w, cr
 
 
-# Default criteria-to-objectives loading structure (paper, Section on
-# objectives and criteria): c1-c3 load onto capability and safety, c4 onto
-# tool reliability, c5 onto context, c6 onto cost, c7 onto latency.
-# c8 (data governance) generates hard constraints, never weights.
+# Default mapping from task-profile criteria to resource weights (paper,
+# Stage 2, automated way): each sensitivity loads onto one resource. Context,
+# safety and data governance generate hard constraints, never weights.
 DEFAULT_LOADING: dict[str, dict[str, float]] = {
-    "accuracy":            {"capability": 0.7, "safety": 0.3},
-    "action_risk":         {"safety": 0.7, "tool_reliability": 0.3},
-    "reasoning_depth":     {"capability": 1.0},
-    "tool_use_intensity":  {"tool_reliability": 1.0},
-    "trace_length":        {"context": 1.0},
-    "cost_sensitivity":    {"cost": 1.0},
-    "latency_sensitivity": {"latency": 1.0},
+    "carbon_sensitivity": {"energy": 1.0},
+    "cost_sensitivity":   {"cost": 1.0},
+    "time_sensitivity":   {"time": 1.0},
 }
 
 
