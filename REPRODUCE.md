@@ -1,6 +1,6 @@
 # Reproducing the paper
 
-Siraj and Barbati, *When Is Smaller Greener? Right-Sizing Language Models for Agentic AI* (in preparation).
+Siraj and Barbati, *When Is Smaller Greener? Right-Sizing Language Models for Agentic AI* ([arXiv:2610.19345](https://arxiv.org/abs/2610.19345)).
 
 Every computed number, table and figure in the paper is produced by code in this repository. Nothing in the paper is typed in by hand from another source.
 

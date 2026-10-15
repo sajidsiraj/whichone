@@ -2,7 +2,7 @@
 
 Two-stage decision support for choosing which LLM should power an agentic
 AI task. Companion code to Siraj and Barbati, *When Is Smaller Greener?
-Right-Sizing Language Models for Agentic AI* (in preparation).
+Right-Sizing Language Models for Agentic AI* ([arXiv:2610.19345](https://arxiv.org/abs/2610.19345)).
 
 Every computed number, table and figure in the paper can be regenerated with
 `make reproduce`. See [REPRODUCE.md](REPRODUCE.md).
@@ -80,10 +80,6 @@ curl -X POST localhost:8000/v1/recommend \
   -d '{"length": 40, "weights": {"energy": 0.6, "cost": 0.2, "time": 0.2}}'
 ```
 
-Free callers see the decision and its reasons. Measured values, and the
-resources per successful task derived from them, are returned only to Pro
-callers.
-
 Interactive docs: `http://localhost:8000/docs`.
 
 ## Authentication
@@ -114,8 +110,3 @@ comma-separated list of keys and every request must carry a matching
   task family, from runs of the pilot harness, producing dated snapshots.
 * Measured success curves in place of rho^L (paper, Section 4, relaxations).
 * Web front-end on the same API.
-
-## Upgrading a Pro database
-
-Databases created from an earlier `schema.sql` need the files in
-`migrations/`, applied once in date order.

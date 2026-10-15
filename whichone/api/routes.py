@@ -7,8 +7,6 @@ from pydantic import BaseModel
 
 from ..core.types import Constraints, Recommendation, TaskProfile
 from .auth import require_api_key
-from .pro_auth import optional_pro_key
-from ..pro.tenancy import ApiKeyRecord
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_api_key)])
 
@@ -17,54 +15,16 @@ def _service(request: Request):
     return request.app.state.service
 
 
-class RedactedModelInfo(BaseModel):
-    id: str
-    name: str
-    provider: str
-    deployment_class: str
-
-
-class RedactedSnapshot(BaseModel):
-    """What the free tier sees: enough to interpret a recommendation or a
-    frontier (which ids exist, what the objectives mean), never the raw
-    measured values or their provenance -- that measurement effort is the
-    moat, and it is a Pro-tier benefit."""
-    version: str
-    description: str
-    objectives: list
-    models: list[RedactedModelInfo]
-
-
 @router.get("/models")
-def list_models(request: Request, snapshot: str | None = None,
-                pro: ApiKeyRecord | None = Depends(optional_pro_key)):
-    """Full provenance (values, sources, timestamps) for an authenticated
-    Pro caller; a redacted, values-free view for everyone else."""
+def list_models(request: Request, snapshot: str | None = None):
+    """The catalogue snapshot: models, measured values, sources and dates."""
     try:
-        snap = _service(request).snapshot(snapshot)
+        return _service(request).snapshot(snapshot)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    if pro is not None:
-        return snap
-    return RedactedSnapshot(
-        version=snap.version, description=snap.description,
-        objectives=snap.objectives,
-        models=[RedactedModelInfo(id=m.id, name=m.name, provider=m.provider,
-                                  deployment_class=m.deployment_class)
-                for m in snap.models])
 
 
 MAX_INTERVAL_LENGTH = 1000
-
-
-def redact(rec: Recommendation) -> Recommendation:
-    """Free callers get the decision and its reasons (efficient set, stages,
-    ranking scores) but not resources per successful task or attempt success:
-    from those at two task lengths the measured per-step values could be
-    recovered, and those are a Pro-tier benefit."""
-    return rec.model_copy(update={
-        "per_success": {}, "attempt_success": {},
-        "ranking": [r.model_copy(update={"normalised": {}}) for r in rec.ranking]})
 
 
 @router.get("/frontier")
@@ -72,8 +32,7 @@ def get_frontier(request: Request, snapshot: str | None = None,
                  length: int = Query(1, ge=1),
                  max_attempts: int | None = Query(None, ge=1),
                  completion_probability: float | None = Query(None, gt=0, le=1),
-                 min_context: float | None = None,
-                 pro: ApiKeyRecord | None = Depends(optional_pro_key)):
+                 min_context: float | None = None):
     """The efficient set for a task of `length` steps, per successful task.
 
     Preference-free: no weights are involved, so this answer is the same for
@@ -83,7 +42,7 @@ def get_frontier(request: Request, snapshot: str | None = None,
     try:
         body = _service(request).frontier(constraints, length, completion_probability,
                                           max_attempts, snapshot)
-        return body if pro is not None else {**body, "per_success": None}
+        return body
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -106,8 +65,7 @@ def get_frontier_intervals(request: Request, snapshot: str | None = None,
 
 @router.post("/recommend", response_model=Recommendation)
 def post_recommend(request: Request, profile: TaskProfile,
-                   snapshot: str | None = None,
-                   pro: ApiKeyRecord | None = Depends(optional_pro_key)):
+                   snapshot: str | None = None):
     """Full pipeline for one task profile: constraints, per-step screen,
     efficient set at the task length, and Stage 2 only if it is needed.
 
@@ -117,8 +75,7 @@ def post_recommend(request: Request, profile: TaskProfile,
     reproduced exactly.
     """
     try:
-        rec = _service(request).recommend(profile, snapshot)
-        return rec if pro is not None else redact(rec)
+        return _service(request).recommend(profile, snapshot)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:

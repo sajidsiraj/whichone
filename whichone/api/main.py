@@ -11,8 +11,6 @@ from fastapi import FastAPI
 
 from .. import __version__
 from ..catalogue.repository import CatalogueRepository, default_repository
-from .pro_routes import public_router as pro_public_router
-from .pro_routes import router as pro_router
 from .routes import router
 from .service import DecisionService
 
@@ -26,8 +24,6 @@ def create_app(repository: CatalogueRepository | None = None) -> FastAPI:
     )
     app.state.service = DecisionService(repository or default_repository())
     app.include_router(router)
-    app.include_router(pro_public_router)
-    app.include_router(pro_router)
 
     @app.get("/v1/health")
     def health():

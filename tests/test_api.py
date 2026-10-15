@@ -20,24 +20,19 @@ def test_health_and_version(client):
     assert SNAPSHOT in body["snapshots"]
 
 
-def test_models_are_redacted_without_a_pro_key(client):
-    """Unauthenticated/free callers get ids and objective definitions but
-    never raw measured values or provenance -- that measurement effort is
-    the Pro-tier moat (see whichone/api/routes.py RedactedSnapshot, and
-    tests/test_pro_api.py::TestFreeTierModelsRedaction for the Pro-side
-    full-provenance counterpart)."""
+def test_models_include_measured_values(client):
     body = client.get("/v1/models").json()
     assert body["version"] == SNAPSHOT
     first = body["models"][0]
-    assert "objectives" not in first
     assert first["id"] == "model-a"
+    assert "objectives" in first
 
 
 def test_frontier_is_preference_free(client):
     body = client.get("/v1/frontier", params={"length": 40}).json()
     assert sorted(body["efficient"]) == ["model-b", "model-c"]
     assert body["dominated_per_step"] == ["model-d", "model-e"]
-    assert body["per_success"] is None  # values are a Pro-tier benefit
+    assert body["per_success"]
 
 
 def test_frontier_with_completion_requirement(client):
@@ -69,7 +64,7 @@ def test_recommend_returns_audit_record(client):
     assert body["stages"]["dominated_per_step"] == ["model-d", "model-e"]
     assert body["snapshot_version"] == SNAPSHOT
     assert sum(body["weights"].values()) == pytest.approx(1.0)
-    assert body["per_success"] == {} and body["attempt_success"] == {}
+    assert body["per_success"] and body["attempt_success"]
 
 
 def test_recommend_without_weights_returns_the_efficient_set(client):
