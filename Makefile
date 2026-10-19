@@ -31,6 +31,7 @@ reproduce: test paper pilot-analysis
 # Run `make reproduce` first. Only the files below are written; nothing else
 # in the folder is touched.
 PAPER_FILES = paper/output/table_frontier_by_length.tex paper/output/fig_parallel_lines.pdf \
+	paper/output/table_stage2_matrix.tex paper/output/table_stage2_scores.tex \
 	experiments/length_pilot/output/table_pilot.tex \
 	experiments/length_pilot/output/table_pilot_crossovers.tex \
 	experiments/length_pilot/output/table_pilot_crossovers_all.tex \

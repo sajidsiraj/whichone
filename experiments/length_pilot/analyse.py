@@ -239,7 +239,7 @@ def ci(b):
     lo, hi = b["ci95"]
     if b["share_none"] >= 0.975:  # most resamples have no crossover: no range to give
         pct = b["share_none"] * 100
-        return "none in " + (r"$>$99" if 99 < pct < 100 else f"{pct:.0f}") + r"\% of resamples"
+        return "none (" + (r"$>$99" if 99 < pct < 100 else f"{pct:.0f}") + r"\%)"
     return f"{lo}--{hi}" + (f" ({b['share_none'] * 100:.0f}\\% none)" if b["share_none"] > 0.025 else "")
 
 

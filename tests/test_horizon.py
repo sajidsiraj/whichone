@@ -101,3 +101,17 @@ def test_three_task_profiles():
 def test_unlimited_retries_always_feasible():
     assert completion_probability(0.01, math.inf) == 1.0
     assert min_attempt_success(0.99, math.inf) == 0.0
+
+
+def test_stage2_example_at_sixty_steps():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "paper"))
+    from reproduce import stage2
+    st = stage2()
+    assert st["efficient"] == ["A", "B", "C"]
+    tops = {row["label"]: (row["saw_top"], row["topsis_top"]) for row in st["weights"]}
+    assert tops["Equal"] == ("B", "B")
+    assert tops["Energy and cost"] == ("C", "C")
+    assert tops["Energy, little cost"] == ("B", "C")
+    assert st["simplex"]["agree_share"] == pytest.approx(0.973, abs=0.001)
