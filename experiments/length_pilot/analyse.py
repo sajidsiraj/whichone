@@ -264,6 +264,55 @@ def family(key):
     return name.rsplit(" ", 1)[0] if " " in name else name
 
 
+def linear_trend(ys):
+    """Least-squares straight line through ys[j] against step j = 1..n."""
+    n = len(ys)
+    mx, my = (n + 1) / 2, sum(ys) / n
+    b = sum((j + 1 - mx) * (y - my) for j, y in enumerate(ys)) / sum((j + 1 - mx) ** 2 for j in range(n))
+    return [my + b * (j + 1 - mx) for j in range(n)]
+
+
+def growth_condition(summ, keys, dominated, k="energy"):
+    """The sufficient condition for a single crossover when resource use per
+    step varies along the task (Section 4.7): for a less reliable model a and
+    a more reliable b, the ratio g(L) = C_a(L) / C_b(L) of cumulative resource
+    may fall from one length to the next by no more than the factor
+    rho_a / rho_b. Checked on the raw step means from step 10 on, and on a
+    straight-line trend of each model's resource per step, which removes the
+    noise of single steps. Pairs as in the crossover tables: both models
+    survive the per-step screen, and a is less reliable and uses less per step."""
+    def ratios(ca, cb):
+        g = [x / y for x, y in zip(ca, cb)]
+        return [g[j + 1] / g[j] for j in range(len(g) - 1)]
+
+    def step_means(key):
+        c = summ[key]["cumulative"][k]
+        return [c[0]] + [c[j] - c[j - 1] for j in range(1, len(c))]
+
+    trend = {key: cumulative(linear_trend(step_means(key))) for key in keys}
+    keep = [key for key in keys if key not in dominated]
+    out = {"pairs": 0, "ratio_rises_trend": 0, "holds_trend": 0, "holds_raw_from_step_10": 0,
+           "fails_trend": [], "growth_last10_over_first10": {}}
+    for key in keep:
+        m = step_means(key)
+        out["growth_last10_over_first10"][key] = (sum(m[-10:]) / 10) / (sum(m[:10]) / 10)
+    for i, ka in enumerate(keep):
+        for kb in keep[i + 1:]:
+            ra, rb = summ[ka]["rho_hat"], summ[kb]["rho_hat"]
+            if not (ra < rb and summ[ka]["per_step_mean"][k] < summ[kb]["per_step_mean"][k]):
+                continue
+            out["pairs"] += 1
+            t = ratios(trend[ka], trend[kb])
+            out["ratio_rises_trend"] += all(x >= 1 for x in t)
+            if all(x >= ra / rb for x in t):
+                out["holds_trend"] += 1
+            else:
+                out["fails_trend"].append([ka, kb])
+            raw = ratios(summ[ka]["cumulative"][k], summ[kb]["cumulative"][k])
+            out["holds_raw_from_step_10"] += all(x >= ra / rb for x in raw[9:])
+    return out
+
+
 def per_step_dominated(summ, keys):
     """Models another model beats per step: at least as reliable and using no
     more energy or time per step, better on one (cost is not measured locally).
@@ -509,6 +558,10 @@ def main():
                 f"obsCI={v['observed_boot'] and v['observed_boot']['ci95']}"
                 for k, v in pair["resources"].items() if k != "cost"))
 
+    growth = growth_condition(summ, keys, dominated)
+    print("single-crossing condition with growing energy per step:",
+          {x: y for x, y in growth.items() if x != "growth_last10_over_first10"})
+
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     slim = {k: {x: y for x, y in v.items() if x not in ("cumulative", "per_success", "per_success_fitted", "S")}
@@ -521,7 +574,7 @@ def main():
          "dominated_per_step": dominated, "shown": shown,
          "cheapest_energy_fitted": cheapest_by_length(summ, keys, lmax),
          "cheapest_energy_observed": cheapest_by_length(summ, keys, lmax, "per_success"),
-         "pairs": pairs},
+         "pairs": pairs, "growth_condition_energy": growth},
         indent=1))
     tables(summ, keys, pairs, out, lmax, shown, dominated, sfx)
     if not a.no_figure:
