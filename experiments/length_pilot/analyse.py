@@ -72,6 +72,36 @@ def rho_hat(rs, lmax):
     return ok / (ok + fails) if ok + fails else float("nan")
 
 
+def binom_cdf(x, n, p):
+    """P(X <= x) for X ~ Binomial(n, p), summed in log space."""
+    if p <= 0:
+        return 1.0
+    if p >= 1:
+        return 1.0 if x >= n else 0.0
+    lp, lq = math.log(p), math.log1p(-p)
+    return min(1.0, sum(math.exp(math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1)
+                                 + i * lp + (n - i) * lq) for i in range(x + 1)))
+
+
+def rho_ci_exact(rs, lmax, alpha=0.05):
+    """Clopper-Pearson interval for the per-step reliability, treating each
+    step passed or failed as one trial. Unlike a bootstrap, it does not
+    collapse to a single point when no run passes a step, or none fails."""
+    x = sum((r["first_fail"] - 1) if r["first_fail"] else lmax for r in rs)
+    n = x + sum(1 for r in rs if r["first_fail"])
+
+    def solve(f):  # f rises with p; find f(p) = 0 by bisection
+        lo, hi = 0.0, 1.0
+        for _ in range(100):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if f(mid) < 0 else (lo, mid)
+        return (lo + hi) / 2
+
+    lower = 0.0 if x == 0 else solve(lambda p: (1 - binom_cdf(x - 1, n, p)) - alpha / 2)
+    upper = 1.0 if x == n else solve(lambda p: alpha / 2 - binom_cdf(x, n, p))
+    return [lower, upper]
+
+
 def step_resources(rs, lmax, prices, energy, model):
     """Mean resource used at step j, over runs (j = 1..lmax)."""
     sums = {k: [0.0] * lmax for k in RESOURCES}
@@ -207,6 +237,9 @@ def ci(b):
     if not b or not b["ci95"]:
         return "--"
     lo, hi = b["ci95"]
+    if b["share_none"] >= 0.975:  # most resamples have no crossover: no range to give
+        pct = b["share_none"] * 100
+        return "none in " + (r"$>$99" if 99 < pct < 100 else f"{pct:.0f}") + r"\% of resamples"
     return f"{lo}--{hi}" + (f" ({b['share_none'] * 100:.0f}\\% none)" if b["share_none"] > 0.025 else "")
 
 
@@ -435,10 +468,10 @@ def main():
     summ = {key: summarise(rs, lmax, prices, energy, rs[0]["model"]) for key, rs in runs.items()}
     # order by reliability, ties by per-step energy, so a is always the less reliable
     keys = sorted(summ, key=lambda k: (summ[k]["rho_hat"], summ[k]["per_step_mean"]["energy"]))
-    rho_ci, cross_ci = bootstrap(runs, keys, lmax, prices, energy, a.boot, rng)
+    _, cross_ci = bootstrap(runs, keys, lmax, prices, energy, a.boot, rng)
     for key in keys:
         rs, m = runs[key], summ[key]
-        m["rho_ci95"] = rho_ci[key]
+        m["rho_ci95"] = rho_ci_exact(rs, lmax)
         measured = all(s.get("gpu_energy_j") is not None for r in rs for s in r["steps"])
         m["energy_source"] = "measured (GPU board, NVML)" if measured else (
             "estimate (energy.json)" if rs[0]["model"] in energy else "none")
